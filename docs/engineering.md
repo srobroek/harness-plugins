@@ -166,7 +166,7 @@ The loop is shared: `watchAsked` is a thin wrapper over the loop in `lib/src/eve
     The structure of upstream is not taken, because its rewrite dropped #94 protections (the review rounds of PR #112 found them one by one). Where the two differ:
     - Registry format: the shipped 0.10.5 bare JSON list of `{key, root}` stays the format. The new fields (`commonDir`, `repo`, `receiptIds`, `addedAt`) are optional. A 0.10.5 file reads unchanged, and only the count rule keeps its entries (they have no `receiptIds`). The `{version, clones}` object of upstream would make an older reader refuse the file. The registry stays at `<receipts root>/.clones/<session repo key>.json`.
     - The registry update refuses a file it cannot parse or read, and leaves the file as it was. It keeps the original error as `cause`. `clone-registry.test.ts` has a test for each. Each test fails when its refusal goes.
-    - Holds go to every known clone: every registry entry and the memory of this instance. Delivery writes them side by side, without a git wait. When it cannot write the registry, the registration stays in memory and wins over the file.
+    - Running work is not written per clone. Each session's last idle report is kept whole (see Running reports below), and a removal in any repository reads it. The registry only tells the retry and gc where receipts are.
     - Delivery keys `doneIds`, `retriedAt` and `attemptedAt` per repository and receipt id.
     - gc drops a registration only on positive evidence. Its receipt is cleaned, or a later receipt supersedes it. Then gc collects the landing records of the target. These keep the registration:
       - an unreadable record
@@ -331,18 +331,31 @@ The second case explains the name `security-auditor` in `agent-reviewer`. Named 
 - Delivery reads and writes the coordination files under the target's git common directory: claims and landing records, holds and denials, and the removal lock.
 - If the clone now resolves to another common directory, delivery removes nothing.
 - The final checks wait on listings, so right before the removal call delivery proves both `.git` markers again, synchronously. It checks the worktree's and the directory the removal runs from, and refuses if either changed.
-- Delivery keys its in-memory vetoes by canonical worktree path and shares them across repositories. Before any wait, it publishes each veto.
 - The last check lists the sessions in the worktree across all projects.
 - If the sessions in the clone and the worktree name exactly one project id, delivery removes the worktree through OpenCode's registry. With any other answer it refuses the removal.
 - `cleanupDelivery` without `coordinate` still refuses another repository.
 
 The clone registry is `<receipts root>/.clones/<session repo key>.json` (`clone-registry.ts`), a JSON list as 0.10.5 wrote it. It lists, newest first, each repository that the session's repository landed into. An entry has the key and canonical root of that repository. It can also have its common directory and its `owner/name`. It can also list the receipt ids landed there, with the time.
 
-The turn-end pass and an explicit cleanup drop the settled ids. An entry with no id left goes once gc collects the landing records of the target. The turn-end retry reads the registry. So do the idle-hook holds, and so does gc. Each one checks the key of a root again first. Each update takes a lease lock (`lib/src/lease-lock.ts`) beside the file and replaces the file by rename.
+The turn-end pass and an explicit cleanup drop the settled ids. An entry with no id left goes once gc collects the landing records of the target. The turn-end retry reads the registry, and so does gc. Each one checks the key of a root again first. Each update takes a lease lock (`lib/src/lease-lock.ts`) beside the file and replaces the file by rename.
 
-Past 32 entries, the oldest entries with no pending receipts go. An entry with pending receipts stays.
+Past 32 entries, the oldest entries that need no registration go. An entry stays whatever the count when it has pending receipts, when a landing record of its target repository is not collected yet, or when those records cannot be read (`registrationNeeded`): once the registration is gone nothing else would find the records. An older entry with no common directory follows the count rule.
 
-Each plugin instance also keeps the clones it registered in memory, and those win over the file. A failed write leaves its own holds and retry intact. A landing record reaches the target before the registry write starts, and each clone's holds are written without waiting on any other clone.
+Each plugin instance also keeps the clones it registered in memory, and those win over the file. A failed write leaves its retry intact. A landing record reaches the target before the registry write starts.
+
+### Running reports
+
+`plugins/delivery/opencode/src/running-reports.ts` keeps what each session last reported as running, one file per session: `<receipts root>/.running/<sha1(session id)>.json` holds `{sessionID, jobs, at, pid, host, instance}`. `instance` names the server process that wrote it. The idle hook writes it first, before any git, registry or receipt work, and decides nothing at write time: no repository, clone listing or session lookup is needed to record a report.
+
+Threat model: the receipts root belongs to one machine, and any OpenCode server on that machine may write it. Reports from another host hold until they expire, measured on the reader's clock against the file's mtime. Clocks across hosts are not trusted, so `at` only orders one session's writes.
+
+Ordering and atomicity: every write, clear and removal of a report takes one lease (`<receipts root>/.running.lock`, the `lib/src/lease-lock.ts` helper the other coordination writes use). Under it a write compares `at` with the session's report on disk and then renames a temp file over it, so a report delayed on its way never replaces or deletes the session's newer one, in this process or another. The compare and the rename are atomic only against writers that take the lease; a process that writes without it (or from another host with no shared lease) is not covered. A removal takes the lease at its last read of the reports and keeps it until its removal section ends, so a report that arrives meanwhile waits. The lock order is always the worktree's removal lock, then the store lease; no writer takes the worktree lock while it holds the lease. Reads are bounded: a report is read as a small regular file only, so a FIFO, a device, a symlink or an oversized file makes the store unreadable instead of stopping the check.
+
+Only the reporting session clears its report: an empty job list deletes the file, and `session.deleted` deletes it too. A non-empty write that fails (or a lease that cannot be taken) marks the session `unrecorded`, a hold on every removal, until its next write or delete that succeeds, or finds the session's own newer report already there. `session.deleted` clears the mark whether or not the file can be removed: a file left behind expires, or its owner is judged dead. `unrecorded` is this process's memory and is not shared across instances: when the store cannot be written, the other instance's own read and write probe fails too.
+
+A removal asks last, under the removal lock, after the claim, `holdsState`, denial and busy-session checks. It holds when a session is `unrecorded`, when the reports cannot be read, when the store cannot be written, or when a live report names the worktree. A report is live until its file is older than `HOLD_EXPIRY_MS` on the reader's clock. One written by another server on this host stops counting when its pid is gone; one from another host counts until it expires. For a report of this server, "its session is not found" also counts as dead; for another server's report it never does, because this host's sessions say nothing about it. The host's idle list gives each job the session that owns it (and a shell its `command`), and no working directory: so a job holds when its command contains the worktree path (raw or canonical), when a recorded `cwd` is inside it, or, with no recorded cwd, when a session it names works inside it, cannot be located (a failed or timed-out lookup, or no directory), or was not looked up; a job that names no session has no cwd to establish and holds. A session this server does not have is skipped. The reports are read once, the sessions looked up, and read again under the lease; the lookups are made again for every report whose time or jobs changed between the two reads, and a session not looked up holds.
+
+Known gap: the reports are delivery's alone. `subagent-worktree`'s lane owner no longer sees delivery's per-worktree holds for unrelated sessions in landed lanes. The fix is to move `running-reports` into `lib/` and have `holdsState` callers read it.
 
 ## Commands
 

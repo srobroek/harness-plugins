@@ -5497,8 +5497,9 @@ ${next.slice(0, -1).map((step) => `  ${step}`).join(`
 }
 
 // plugins/delivery/opencode/src/pending-cleanup.ts
-import { existsSync as existsSync4, readdirSync as readdirSync4 } from "fs";
-import { join as join9, resolve as resolve7 } from "path";
+import { existsSync as existsSync3, mkdirSync as mkdirSync8, readdirSync as readdirSync5 } from "fs";
+import { hostname as hostname2 } from "os";
+import { join as join10, resolve as resolve7 } from "path";
 
 // lib/src/event-watch.ts
 function abortableSleep2(ms, signal, timers = globalThis) {
@@ -5600,147 +5601,6 @@ function watchEvents(deps) {
     }
   };
 }
-
-// lib/src/session-eviction.ts
-import { basename as basename4, dirname as dirname5 } from "path";
-function canonicalCheckout(commonDir, fallback) {
-  if (commonDir !== undefined && basename4(commonDir) === ".git")
-    return dirname5(commonDir);
-  return fallback;
-}
-
-// lib/src/worktree-claims.ts
-import { createHash as createHash2 } from "crypto";
-import { existsSync as existsSync3, mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync5, realpathSync as realpathSync4, renameSync, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "fs";
-import { join as join6, resolve as resolve6 } from "path";
-var MAX_FILE_BYTES = 64 * 1024;
-var MAX_LANDINGS = 500;
-var text3 = (value) => typeof value === "string" && value !== "" ? value : undefined;
-var finite = (value) => typeof value === "number" && Number.isFinite(value) ? value : undefined;
-var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-function parseClaim(value) {
-  if (!isObject(value))
-    return;
-  const directory = text3(value.directory);
-  const branch = text3(value.branch);
-  const sessionID = text3(value.sessionID);
-  const parentID = text3(value.parentID);
-  const createdAt = finite(value.createdAt);
-  if (!directory || !branch || !sessionID || !parentID || createdAt === undefined)
-    return;
-  const resumedAt = finite(value.resumedAt);
-  return { directory, branch, sessionID, parentID, createdAt, generation: finite(value.generation) ?? 0, ...resumedAt === undefined ? {} : { resumedAt } };
-}
-function parseLanding(value) {
-  if (!isObject(value))
-    return;
-  const receiptId = text3(value.receiptId);
-  const worktree = text3(value.worktree);
-  const headRefOid = text3(value.headRefOid);
-  const sessionID = text3(value.sessionID);
-  const landedAt = finite(value.landedAt);
-  if (!receiptId || !worktree || !headRefOid || !sessionID || landedAt === undefined)
-    return;
-  const denied = isObject(value.denied) ? value.denied : undefined;
-  const deniedAt = finite(denied?.at);
-  const deniedBy = text3(denied?.sessionID);
-  return {
-    receiptId,
-    worktree,
-    headRefOid,
-    sessionID,
-    landedAt,
-    ...deniedAt !== undefined && deniedBy ? { denied: { at: deniedAt, sessionID: deniedBy } } : {},
-    ...value.nudged === true ? { nudged: true } : {}
-  };
-}
-function canonicalDirectory(path) {
-  try {
-    return realpathSync4(path);
-  } catch {
-    return resolve6(path);
-  }
-}
-function claimKey(directory) {
-  return createHash2("sha1").update(canonicalDirectory(directory)).digest("hex");
-}
-var claimFile = (commonDir, directory) => join6(commonDir, "opencode", "lane-claims", `${claimKey(directory)}.json`);
-var SAFE_ID = /^[A-Za-z0-9._-]+$/;
-var landingFile = (commonDir, receiptId) => {
-  if (!SAFE_ID.test(receiptId))
-    throw new Error(`unsafe receipt id ${JSON.stringify(receiptId)}`);
-  return join6(commonDir, "opencode", "landings", `${receiptId}.json`);
-};
-function readJson(path, parse) {
-  let raw;
-  try {
-    raw = readFileSync5(path, "utf8");
-  } catch (error) {
-    return error.code === "ENOENT" ? { kind: "missing" } : { kind: "unreadable", reason: error.message };
-  }
-  if (raw.length > MAX_FILE_BYTES)
-    return { kind: "unreadable", reason: "file too large" };
-  try {
-    const value = parse(JSON.parse(raw));
-    return value === undefined ? { kind: "unreadable", reason: "unrecognised content" } : { kind: "present", value };
-  } catch (error) {
-    return { kind: "unreadable", reason: error.message };
-  }
-}
-function writeAtomic(path, value) {
-  mkdirSync4(join6(path, ".."), { recursive: true });
-  const temp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  writeFileSync4(temp, `${JSON.stringify(value)}
-`);
-  renameSync(temp, path);
-}
-var readClaim = (commonDir, directory) => readJson(claimFile(commonDir, directory), parseClaim);
-var readLanding = (commonDir, receiptId) => readJson(landingFile(commonDir, receiptId), parseLanding);
-function writeLanding(commonDir, record) {
-  writeAtomic(landingFile(commonDir, record.receiptId), record);
-}
-function removeLanding(commonDir, receiptId) {
-  rmSync3(landingFile(commonDir, receiptId), { force: true });
-}
-function listLandings(commonDir) {
-  const directory = join6(commonDir, "opencode", "landings");
-  if (!existsSync3(directory))
-    return { records: [], unreadable: false };
-  let names;
-  try {
-    names = readdirSync2(directory).filter((name) => name.endsWith(".json"));
-  } catch {
-    return { records: [], unreadable: true };
-  }
-  if (names.length > MAX_LANDINGS)
-    return { records: [], unreadable: true };
-  const records = [];
-  let unreadable = false;
-  for (const name of names) {
-    const read = readJson(join6(directory, name), parseLanding);
-    if (read.kind === "present")
-      records.push(read.value);
-    else if (read.kind === "unreadable")
-      unreadable = true;
-  }
-  return { records, unreadable };
-}
-function landingsFor(records, directory) {
-  const want = canonicalDirectory(directory);
-  return records.filter((record) => canonicalDirectory(record.worktree) === want);
-}
-function ownershipOf(read) {
-  if (read.kind === "present")
-    return { owner: "lane", claim: read.value };
-  if (read.kind === "unreadable")
-    return { owner: "unknown", reason: read.reason };
-  return { owner: "none" };
-}
-
-// lib/src/worktree-locks.ts
-import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
-import { mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
-import { join as join7 } from "path";
 
 // lib/src/lease-lock.ts
 import { AsyncLocalStorage } from "async_hooks";
@@ -5899,7 +5759,7 @@ async function withLease(lockPath, options, work) {
       }
       const code = error.code;
       if (code !== "EEXIST")
-        return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})` };
+        return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})`, cause: error };
       if (readBounded(lockPath).kind === "unreadable" || readBounded(c.steal).kind === "unreadable") {
         return { kind: "failed", reason: `the lock path ${lockPath} (or its steal lock) is not a small regular file, so its holder cannot be read safely` };
       }
@@ -5941,303 +5801,12 @@ async function withLease(lockPath, options, work) {
   }
 }
 
-// lib/src/worktree-locks.ts
-var HOLD_EXPIRY_MS = 24 * 3600000;
-var sha1 = (text) => createHash3("sha1").update(text).digest("hex");
-var isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var LOCK_TTL_MS = 120000;
-var lockFile = (commonDir, directory) => join7(commonDir, "opencode", "locks", `${sha1(canonicalDirectory(directory))}.lock`);
-
-class LockTimeout extends Error {
-  directory;
-  constructor(directory, detail = "") {
-    super(`could not lock ${directory}${detail === "" ? "" : ` (${detail})`}`);
-    this.directory = directory;
-    this.name = "LockTimeout";
-  }
-}
-async function withDiskLock(commonDir, directory, options, work) {
-  const path = lockFile(commonDir, directory);
-  mkdirSync5(join7(path, ".."), { recursive: true });
-  const result = await withLease(path, {
-    owner: options.sessionID,
-    leaseMs: options.ttlMs ?? LOCK_TTL_MS,
-    waitMs: options.waitMs ?? 30000,
-    ...options.renewMs === undefined ? {} : { renewMs: options.renewMs },
-    ...options.now === undefined ? {} : { now: options.now },
-    ...options.host === undefined ? {} : { host: options.host },
-    ...options.alive === undefined ? {} : { alive: options.alive },
-    ...options.sleep === undefined ? {} : { sleep: options.sleep },
-    ...options.seams === undefined ? {} : { seams: options.seams }
-  }, work);
-  if (result.kind === "done")
-    return result.value;
-  throw new LockTimeout(directory, result.reason);
-}
-function parseHold(value) {
-  if (!isObject2(value))
-    return;
-  const { sessionID, directory, jobs, updatedAt } = value;
-  if (typeof sessionID !== "string" || typeof directory !== "string" || typeof updatedAt !== "number" || !Array.isArray(jobs))
-    return;
-  const parsed = [];
-  for (const job of jobs) {
-    if (!isObject2(job) || typeof job.kind !== "string" || typeof job.id !== "string")
-      return;
-    parsed.push({ kind: job.kind, id: job.id });
-  }
-  return { sessionID, directory, jobs: parsed, updatedAt };
-}
-var holdsDir = (commonDir, directory) => join7(commonDir, "opencode", "holds", sha1(canonicalDirectory(directory)));
-var holdFile = (commonDir, directory, sessionID) => join7(holdsDir(commonDir, directory), `${sha1(sessionID)}.json`);
-function setHold(commonDir, directory, sessionID, jobs, now) {
-  const path = holdFile(commonDir, directory, sessionID);
-  if (jobs.length === 0) {
-    rmSync4(path, { force: true });
-    return;
-  }
-  mkdirSync5(holdsDir(commonDir, directory), { recursive: true });
-  const temp = `${path}.${randomUUID2()}.tmp`;
-  writeFileSync5(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: now }));
-  renameSync2(temp, path);
-}
-var PENDING_SUFFIX = ".pending.json";
-var pendingHoldFile = (commonDir, directory, sessionID) => join7(holdsDir(commonDir, directory), `${sha1(sessionID)}${PENDING_SUFFIX}`);
-async function recordHold(commonDir, directory, sessionID, jobs, at, lock) {
-  const pending = pendingHoldFile(commonDir, directory, sessionID);
-  if (jobs.length > 0) {
-    mkdirSync5(holdsDir(commonDir, directory), { recursive: true });
-    const temp = `${pending}.${randomUUID2()}.tmp`;
-    writeFileSync5(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: at }));
-    renameSync2(temp, pending);
-  }
-  await lockedWrite(commonDir, directory, lock, () => {
-    setHold(commonDir, directory, sessionID, jobs, at);
-    let left;
-    try {
-      left = parseHold(JSON.parse(readFileSync6(pending, "utf8")));
-    } catch {
-      left = undefined;
-    }
-    if (left === undefined || left.updatedAt <= at)
-      rmSync4(pending, { force: true });
-  });
-}
-function readHolds(commonDir, directory) {
-  const dir = holdsDir(commonDir, directory);
-  let names;
-  try {
-    names = readdirSync3(dir).filter((name) => name.endsWith(".json"));
-  } catch (error) {
-    const absent = error.code === "ENOENT";
-    return { holds: [], unreadable: !absent, ...absent ? { missing: true } : {} };
-  }
-  const holds = [];
-  let unreadable = false;
-  for (const name of names) {
-    try {
-      const hold = parseHold(JSON.parse(readFileSync6(join7(dir, name), "utf8")));
-      if (hold === undefined)
-        unreadable = true;
-      else
-        holds.push(name.endsWith(PENDING_SUFFIX) ? { ...hold, pendingFile: join7(dir, name) } : hold);
-    } catch {
-      unreadable = true;
-    }
-  }
-  return { holds, unreadable };
-}
-function elapsed(ms) {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  if (seconds < 60)
-    return `${seconds} s`;
-  const minutes = Math.floor(seconds / 60);
-  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
-}
-function holdBlock(read, now, expiryMs = HOLD_EXPIRY_MS) {
-  if (read.unreadable)
-    return "the background-work records cannot be read";
-  const live = read.holds.find((hold) => hold.jobs.length > 0 && now - hold.updatedAt < expiryMs);
-  if (live === undefined)
-    return;
-  const first = live.jobs[0];
-  const running = `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`;
-  if (live.pendingFile === undefined)
-    return running;
-  const ignoredAfter = new Date(live.updatedAt + expiryMs).toISOString();
-  const jobs = live.jobs.map((job) => `${job.kind} ${job.id}`).join(", ");
-  return `${running}; recorded before its lock was taken, ${elapsed(now - live.updatedAt)} ago; ignored after ${ignoredAfter}; ${live.pendingFile}; ` + `delete it only after session ${live.sessionID}'s ${live.jobs.length} job(s) (${jobs}) have finished and that session has ended`;
-}
-function holdsWritable(commonDir, directory) {
-  const dir = holdsDir(commonDir, directory);
-  try {
-    mkdirSync5(dir, { recursive: true });
-    const probe = join7(dir, `.probe.${randomUUID2()}`);
-    writeFileSync5(probe, "");
-    rmSync4(probe, { force: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-function holdsState(commonDir, directory, now, expiryMs = HOLD_EXPIRY_MS) {
-  const read = readHolds(commonDir, directory);
-  const blocked = holdBlock(read, now, expiryMs);
-  if (blocked !== undefined)
-    return blocked;
-  if (!holdsWritable(commonDir, directory))
-    return "the coordination store is not writable, so running work cannot be ruled out";
-  return;
-}
-async function lockedWorktreeRead(commonDir, directory, lock, read) {
-  let entered = false;
-  try {
-    return await withDiskLock(commonDir, directory, lock, async () => {
-      entered = true;
-      return { locked: true, value: await read() };
-    });
-  } catch (error) {
-    if (entered)
-      throw error;
-    const message = error instanceof LockTimeout ? `the worktree is locked by another remover (${error.message})` : `the lock could not be taken (${error instanceof Error ? error.message : String(error)})`;
-    return { locked: false, reason: message };
-  }
-}
-async function lockedWorktreeRemoval(commonDir, directory, lock, steps) {
-  const outcome = await lockedWorktreeRead(commonDir, directory, lock, async () => {
-    const reason = await steps.recheck();
-    if (reason !== undefined)
-      return { removed: false, reason };
-    return { removed: true, value: await steps.remove() };
-  });
-  return outcome.locked ? outcome.value : { removed: false, reason: outcome.reason };
-}
-function lockedWrite(commonDir, directory, options, write) {
-  return withDiskLock(commonDir, directory, { waitMs: 1e4, ...options }, async () => write());
-}
-
-// plugins/delivery/opencode/src/clone-registry.ts
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync6 } from "fs";
-import { isAbsolute as isAbsolute3, join as join8 } from "path";
-var MAX_CLONES = 32;
-var KEY = /^[0-9a-f]{16}$/;
-var LOCK_WAIT_MS = 1e4;
-function registryFile(env, sessionKey) {
-  if (!KEY.test(sessionKey))
-    throw new Error(`repo.key: observed ${JSON.stringify(sessionKey)}, expected 16 hex characters`);
-  return join8(receiptDirectory(env), ".clones", `${sessionKey}.json`);
-}
-function parseClones(text) {
-  return entriesOf(text) ?? [];
-}
-function entriesOf(text) {
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(raw))
-    return null;
-  return raw.flatMap((entry) => {
-    const { key, root, commonDir, repo, receiptIds, addedAt } = entry ?? {};
-    if (typeof key !== "string" || !KEY.test(key) || typeof root !== "string" || !isAbsolute3(root))
-      return [];
-    return [
-      {
-        key,
-        root,
-        ...typeof commonDir === "string" && isAbsolute3(commonDir) ? { commonDir } : {},
-        ...typeof repo === "string" ? { repo } : {},
-        ...Array.isArray(receiptIds) && receiptIds.every((id) => typeof id === "string") ? { receiptIds } : {},
-        ...typeof addedAt === "number" ? { addedAt } : {}
-      }
-    ];
-  });
-}
-function mergeClone(known, entry) {
-  if (known === undefined)
-    return entry;
-  const ids = known.receiptIds === undefined || entry.receiptIds === undefined ? undefined : [...new Set([...known.receiptIds, ...entry.receiptIds])];
-  const { receiptIds: _ids, ...rest } = entry;
-  return { ...rest, ...ids === undefined ? {} : { receiptIds: ids } };
-}
-function withoutReceipts(entry, ids) {
-  if (entry.receiptIds === undefined)
-    return entry;
-  const left = entry.receiptIds.filter((id) => !ids.has(id));
-  return left.length === 0 ? null : { ...entry, receiptIds: left };
-}
-function withClone(entries, entry, pending = () => false) {
-  const next = [mergeClone(entries.find((known) => known.key === entry.key), entry), ...entries.filter((known) => known.key !== entry.key)];
-  const drop = new Set;
-  for (let index = next.length - 1;index > 0 && next.length - drop.size > MAX_CLONES; index--) {
-    const candidate = next[index];
-    if (!pending(candidate))
-      drop.add(candidate);
-  }
-  return next.filter((known) => !drop.has(known));
-}
-function readClones(env, sessionKey) {
-  try {
-    return parseClones(readFileSync7(registryFile(env, sessionKey), "utf8"));
-  } catch {
-    return [];
-  }
-}
-function loadForUpdate(file) {
-  let text;
-  try {
-    text = readFileSync7(file, "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT")
-      return [];
-    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)}); it was left unchanged`, {
-      cause: error
-    });
-  }
-  try {
-    JSON.parse(text);
-  } catch (error) {
-    throw new Error(`the clone registry ${file} cannot be parsed (${error instanceof Error ? error.message : String(error)}); it was left unchanged`, {
-      cause: error
-    });
-  }
-  const entries = entriesOf(text);
-  if (entries === null)
-    throw new Error(`the clone registry ${file} cannot be parsed as a JSON list; it was left unchanged`);
-  return entries;
-}
-async function addClone(env, sessionKey, entry, pending, options = {}) {
-  const file = registryFile(env, sessionKey);
-  mkdirSync6(join8(receiptDirectory(env), ".clones"), { recursive: true });
-  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
-    const current = loadForUpdate(file);
-    const merged = mergeClone(current[0]?.key === entry.key ? current[0] : undefined, entry);
-    if (current[0]?.key === entry.key && JSON.stringify(current[0]) === JSON.stringify(merged))
-      return;
-    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync6(temporary, `${JSON.stringify(withClone(current, entry, pending))}
-`, { mode: 384 });
-    renameSync3(temporary, file);
-  });
-  if (result.kind === "failed")
-    throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`);
-}
-async function settleReceipts(env, sessionKey, key, ids, options = {}) {
-  const file = registryFile(env, sessionKey);
-  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
-    const current = loadForUpdate(file);
-    const next = current.flatMap((entry) => entry.key === key ? withoutReceipts(entry, ids) ?? [] : [entry]);
-    if (JSON.stringify(next) === JSON.stringify(current))
-      return;
-    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync6(temporary, `${JSON.stringify(next)}
-`, { mode: 384 });
-    renameSync3(temporary, file);
-  });
-  if (result.kind === "failed")
-    throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`);
+// lib/src/session-eviction.ts
+import { basename as basename4, dirname as dirname5 } from "path";
+function canonicalCheckout(commonDir, fallback) {
+  if (commonDir !== undefined && basename4(commonDir) === ".git")
+    return dirname5(commonDir);
+  return fallback;
 }
 
 // lib/src/session-lanes.ts
@@ -6360,6 +5929,425 @@ async function moveSessionsHome(client, ids, destination) {
   return results;
 }
 
+// lib/src/worktree-claims.ts
+import { createHash as createHash2 } from "crypto";
+import { mkdirSync as mkdirSync4, readdirSync as readdirSync2, readFileSync as readFileSync5, realpathSync as realpathSync4, renameSync, rmSync as rmSync3, statSync as statSync2, writeFileSync as writeFileSync4 } from "fs";
+import { join as join6, resolve as resolve6 } from "path";
+var MAX_FILE_BYTES = 64 * 1024;
+var MAX_LANDINGS = 500;
+var text3 = (value) => typeof value === "string" && value !== "" ? value : undefined;
+var finite = (value) => typeof value === "number" && Number.isFinite(value) ? value : undefined;
+var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+function parseClaim(value) {
+  if (!isObject(value))
+    return;
+  const directory = text3(value.directory);
+  const branch = text3(value.branch);
+  const sessionID = text3(value.sessionID);
+  const parentID = text3(value.parentID);
+  const createdAt = finite(value.createdAt);
+  if (!directory || !branch || !sessionID || !parentID || createdAt === undefined)
+    return;
+  const resumedAt = finite(value.resumedAt);
+  return { directory, branch, sessionID, parentID, createdAt, generation: finite(value.generation) ?? 0, ...resumedAt === undefined ? {} : { resumedAt } };
+}
+function parseLanding(value) {
+  if (!isObject(value))
+    return;
+  const receiptId = text3(value.receiptId);
+  const worktree = text3(value.worktree);
+  const headRefOid = text3(value.headRefOid);
+  const sessionID = text3(value.sessionID);
+  const landedAt = finite(value.landedAt);
+  if (!receiptId || !worktree || !headRefOid || !sessionID || landedAt === undefined)
+    return;
+  const denied = isObject(value.denied) ? value.denied : undefined;
+  const deniedAt = finite(denied?.at);
+  const deniedBy = text3(denied?.sessionID);
+  return {
+    receiptId,
+    worktree,
+    headRefOid,
+    sessionID,
+    landedAt,
+    ...deniedAt !== undefined && deniedBy ? { denied: { at: deniedAt, sessionID: deniedBy } } : {},
+    ...value.nudged === true ? { nudged: true } : {}
+  };
+}
+function canonicalDirectory(path) {
+  try {
+    return realpathSync4(path);
+  } catch {
+    return resolve6(path);
+  }
+}
+function claimKey(directory) {
+  return createHash2("sha1").update(canonicalDirectory(directory)).digest("hex");
+}
+var claimFile = (commonDir, directory) => join6(commonDir, "opencode", "lane-claims", `${claimKey(directory)}.json`);
+var SAFE_ID = /^[A-Za-z0-9._-]+$/;
+var landingFile = (commonDir, receiptId) => {
+  if (!SAFE_ID.test(receiptId))
+    throw new Error(`unsafe receipt id ${JSON.stringify(receiptId)}`);
+  return join6(commonDir, "opencode", "landings", `${receiptId}.json`);
+};
+function readJson(path, parse) {
+  let raw;
+  try {
+    raw = readFileSync5(path, "utf8");
+  } catch (error) {
+    return error.code === "ENOENT" ? { kind: "missing" } : { kind: "unreadable", reason: error.message };
+  }
+  if (raw.length > MAX_FILE_BYTES)
+    return { kind: "unreadable", reason: "file too large" };
+  try {
+    const value = parse(JSON.parse(raw));
+    return value === undefined ? { kind: "unreadable", reason: "unrecognised content" } : { kind: "present", value };
+  } catch (error) {
+    return { kind: "unreadable", reason: error.message };
+  }
+}
+function writeAtomic(path, value) {
+  mkdirSync4(join6(path, ".."), { recursive: true });
+  const temp = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  writeFileSync4(temp, `${JSON.stringify(value)}
+`);
+  renameSync(temp, path);
+}
+var readClaim = (commonDir, directory) => readJson(claimFile(commonDir, directory), parseClaim);
+var readLanding = (commonDir, receiptId) => readJson(landingFile(commonDir, receiptId), parseLanding);
+function writeLanding(commonDir, record) {
+  writeAtomic(landingFile(commonDir, record.receiptId), record);
+}
+function removeLanding(commonDir, receiptId) {
+  rmSync3(landingFile(commonDir, receiptId), { force: true });
+}
+function listLandings(commonDir) {
+  const directory = join6(commonDir, "opencode", "landings");
+  try {
+    statSync2(directory);
+  } catch (error) {
+    return { records: [], unreadable: error.code !== "ENOENT" };
+  }
+  let names;
+  try {
+    names = readdirSync2(directory).filter((name) => name.endsWith(".json"));
+  } catch {
+    return { records: [], unreadable: true };
+  }
+  if (names.length > MAX_LANDINGS)
+    return { records: [], unreadable: true };
+  const records = [];
+  let unreadable = false;
+  for (const name of names) {
+    const read = readJson(join6(directory, name), parseLanding);
+    if (read.kind === "present")
+      records.push(read.value);
+    else if (read.kind === "unreadable")
+      unreadable = true;
+  }
+  return { records, unreadable };
+}
+function landingsFor(records, directory) {
+  const want = canonicalDirectory(directory);
+  return records.filter((record) => canonicalDirectory(record.worktree) === want);
+}
+function ownershipOf(read) {
+  if (read.kind === "present")
+    return { owner: "lane", claim: read.value };
+  if (read.kind === "unreadable")
+    return { owner: "unknown", reason: read.reason };
+  return { owner: "none" };
+}
+
+// lib/src/worktree-locks.ts
+import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
+import { mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
+import { join as join7 } from "path";
+var HOLD_EXPIRY_MS = 24 * 3600000;
+var sha1 = (text) => createHash3("sha1").update(text).digest("hex");
+var isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var LOCK_TTL_MS = 120000;
+var lockFile = (commonDir, directory) => join7(commonDir, "opencode", "locks", `${sha1(canonicalDirectory(directory))}.lock`);
+
+class LockTimeout extends Error {
+  directory;
+  constructor(directory, detail = "") {
+    super(`could not lock ${directory}${detail === "" ? "" : ` (${detail})`}`);
+    this.directory = directory;
+    this.name = "LockTimeout";
+  }
+}
+async function withDiskLock(commonDir, directory, options, work) {
+  const path = lockFile(commonDir, directory);
+  mkdirSync5(join7(path, ".."), { recursive: true });
+  const result = await withLease(path, {
+    owner: options.sessionID,
+    leaseMs: options.ttlMs ?? LOCK_TTL_MS,
+    waitMs: options.waitMs ?? 30000,
+    ...options.renewMs === undefined ? {} : { renewMs: options.renewMs },
+    ...options.now === undefined ? {} : { now: options.now },
+    ...options.host === undefined ? {} : { host: options.host },
+    ...options.alive === undefined ? {} : { alive: options.alive },
+    ...options.sleep === undefined ? {} : { sleep: options.sleep },
+    ...options.seams === undefined ? {} : { seams: options.seams }
+  }, work);
+  if (result.kind === "done")
+    return result.value;
+  throw new LockTimeout(directory, result.reason);
+}
+function parseHold(value) {
+  if (!isObject2(value))
+    return;
+  const { sessionID, directory, jobs, updatedAt } = value;
+  if (typeof sessionID !== "string" || typeof directory !== "string" || typeof updatedAt !== "number" || !Array.isArray(jobs))
+    return;
+  const parsed = [];
+  for (const job of jobs) {
+    if (!isObject2(job) || typeof job.kind !== "string" || typeof job.id !== "string")
+      return;
+    parsed.push({ kind: job.kind, id: job.id });
+  }
+  return { sessionID, directory, jobs: parsed, updatedAt };
+}
+var holdsDir = (commonDir, directory) => join7(commonDir, "opencode", "holds", sha1(canonicalDirectory(directory)));
+var PENDING_SUFFIX = ".pending.json";
+function readHolds(commonDir, directory) {
+  const dir = holdsDir(commonDir, directory);
+  let names;
+  try {
+    names = readdirSync3(dir).filter((name) => name.endsWith(".json"));
+  } catch (error) {
+    const absent = error.code === "ENOENT";
+    return { holds: [], unreadable: !absent, ...absent ? { missing: true } : {} };
+  }
+  const holds = [];
+  let unreadable = false;
+  for (const name of names) {
+    try {
+      const hold = parseHold(JSON.parse(readFileSync6(join7(dir, name), "utf8")));
+      if (hold === undefined)
+        unreadable = true;
+      else
+        holds.push(name.endsWith(PENDING_SUFFIX) ? { ...hold, pendingFile: join7(dir, name) } : hold);
+    } catch {
+      unreadable = true;
+    }
+  }
+  return { holds, unreadable };
+}
+function elapsed(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60)
+    return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+function holdBlock(read, now, expiryMs = HOLD_EXPIRY_MS) {
+  if (read.unreadable)
+    return "the background-work records cannot be read";
+  const live = read.holds.find((hold) => hold.jobs.length > 0 && now - hold.updatedAt < expiryMs);
+  if (live === undefined)
+    return;
+  const first = live.jobs[0];
+  const running = `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`;
+  if (live.pendingFile === undefined)
+    return running;
+  const ignoredAfter = new Date(live.updatedAt + expiryMs).toISOString();
+  const jobs = live.jobs.map((job) => `${job.kind} ${job.id}`).join(", ");
+  return `${running}; recorded before its lock was taken, ${elapsed(now - live.updatedAt)} ago; ignored after ${ignoredAfter}; ${live.pendingFile}; ` + `delete it only after session ${live.sessionID}'s ${live.jobs.length} job(s) (${jobs}) have finished and that session has ended`;
+}
+function holdsWritable(commonDir, directory) {
+  const dir = holdsDir(commonDir, directory);
+  try {
+    mkdirSync5(dir, { recursive: true });
+    const probe = join7(dir, `.probe.${randomUUID2()}`);
+    writeFileSync5(probe, "");
+    rmSync4(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function holdsState(commonDir, directory, now, expiryMs = HOLD_EXPIRY_MS) {
+  const read = readHolds(commonDir, directory);
+  const blocked = holdBlock(read, now, expiryMs);
+  if (blocked !== undefined)
+    return blocked;
+  if (!holdsWritable(commonDir, directory))
+    return "the coordination store is not writable, so running work cannot be ruled out";
+  return;
+}
+async function lockedWorktreeRead(commonDir, directory, lock, read) {
+  let entered = false;
+  try {
+    return await withDiskLock(commonDir, directory, lock, async () => {
+      entered = true;
+      return { locked: true, value: await read() };
+    });
+  } catch (error) {
+    if (entered)
+      throw error;
+    const message = error instanceof LockTimeout ? `the worktree is locked by another remover (${error.message})` : `the lock could not be taken (${error instanceof Error ? error.message : String(error)})`;
+    return { locked: false, reason: message };
+  }
+}
+async function lockedWorktreeRemoval(commonDir, directory, lock, steps) {
+  const outcome = await lockedWorktreeRead(commonDir, directory, lock, async () => {
+    const reason = await steps.recheck();
+    if (reason !== undefined)
+      return { removed: false, reason };
+    return { removed: true, value: await steps.remove() };
+  });
+  return outcome.locked ? outcome.value : { removed: false, reason: outcome.reason };
+}
+function lockedWrite(commonDir, directory, options, write) {
+  return withDiskLock(commonDir, directory, { waitMs: 1e4, ...options }, async () => write());
+}
+
+// plugins/delivery/opencode/src/clone-registry.ts
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync6 } from "fs";
+import { isAbsolute as isAbsolute3, join as join8 } from "path";
+var MAX_CLONES = 32;
+var KEY = /^[0-9a-f]{16}$/;
+var LOCK_WAIT_MS = 1e4;
+function registryFile(env, sessionKey) {
+  if (!KEY.test(sessionKey))
+    throw new Error(`repo.key: observed ${JSON.stringify(sessionKey)}, expected 16 hex characters`);
+  return join8(receiptDirectory(env), ".clones", `${sessionKey}.json`);
+}
+function entriesOf(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(raw))
+    return null;
+  return raw.flatMap((entry) => {
+    const { key, root, commonDir, repo, receiptIds, addedAt } = entry ?? {};
+    if (typeof key !== "string" || !KEY.test(key) || typeof root !== "string" || !isAbsolute3(root))
+      return [];
+    return [
+      {
+        key,
+        root,
+        ...typeof commonDir === "string" && isAbsolute3(commonDir) ? { commonDir } : {},
+        ...typeof repo === "string" ? { repo } : {},
+        ...Array.isArray(receiptIds) && receiptIds.every((id) => typeof id === "string") ? { receiptIds } : {},
+        ...typeof addedAt === "number" ? { addedAt } : {}
+      }
+    ];
+  });
+}
+function mergeClone(known, entry) {
+  if (known === undefined)
+    return entry;
+  const ids = known.receiptIds === undefined || entry.receiptIds === undefined ? undefined : [...new Set([...known.receiptIds, ...entry.receiptIds])];
+  const { receiptIds: _ids, ...rest } = entry;
+  return { ...rest, ...ids === undefined ? {} : { receiptIds: ids } };
+}
+function withoutReceipts(entry, ids) {
+  if (entry.receiptIds === undefined)
+    return entry;
+  const left = entry.receiptIds.filter((id) => !ids.has(id));
+  return left.length === 0 ? null : { ...entry, receiptIds: left };
+}
+function withClone(entries, entry, pending = () => false) {
+  const next = [mergeClone(entries.find((known) => known.key === entry.key), entry), ...entries.filter((known) => known.key !== entry.key)];
+  const drop = new Set;
+  for (let index = next.length - 1;index > 0 && next.length - drop.size > MAX_CLONES; index--) {
+    const candidate = next[index];
+    if (!pending(candidate))
+      drop.add(candidate);
+  }
+  return next.filter((known) => !drop.has(known));
+}
+function registrationNeeded(entry, pending) {
+  if (pending(entry.key))
+    return true;
+  if (entry.commonDir === undefined)
+    return false;
+  const landings = listLandings(entry.commonDir);
+  if (landings.unreadable)
+    return true;
+  return landings.records.some((record) => entry.receiptIds === undefined || entry.receiptIds.includes(record.receiptId));
+}
+function readClones(env, sessionKey) {
+  const file = registryFile(env, sessionKey);
+  let text;
+  try {
+    text = readFileSync7(file, "utf8");
+  } catch (error) {
+    const code = error.code;
+    if (code === "ENOENT" || code === "ENOTDIR")
+      return [];
+    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)})`, { cause: error });
+  }
+  return entriesIn(file, text, "");
+}
+function loadForUpdate(file) {
+  let text;
+  try {
+    text = readFileSync7(file, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return [];
+    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)}); it was left unchanged`, {
+      cause: error
+    });
+  }
+  return entriesIn(file, text, "; it was left unchanged");
+}
+function entriesIn(file, text, note) {
+  try {
+    JSON.parse(text);
+  } catch (error) {
+    throw new Error(`the clone registry ${file} cannot be parsed (${error instanceof Error ? error.message : String(error)})${note}`, {
+      cause: error
+    });
+  }
+  const entries = entriesOf(text);
+  if (entries === null)
+    throw new Error(`the clone registry ${file} cannot be parsed as a JSON list${note}`);
+  return entries;
+}
+async function addClone(env, sessionKey, entry, pending, options = {}) {
+  const file = registryFile(env, sessionKey);
+  mkdirSync6(join8(receiptDirectory(env), ".clones"), { recursive: true });
+  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
+    const current = loadForUpdate(file);
+    const merged = mergeClone(current[0]?.key === entry.key ? current[0] : undefined, entry);
+    if (current[0]?.key === entry.key && JSON.stringify(current[0]) === JSON.stringify(merged))
+      return;
+    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync6(temporary, `${JSON.stringify(withClone(current, entry, pending))}
+`, { mode: 384 });
+    renameSync3(temporary, file);
+  });
+  if (result.kind === "failed")
+    throw leaseFailure(file, result);
+}
+function leaseFailure(file, result) {
+  return new Error(`the clone registry ${file} could not be updated: ${result.reason}`, { cause: result.cause });
+}
+async function settleReceipts(env, sessionKey, key, ids, options = {}) {
+  const file = registryFile(env, sessionKey);
+  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
+    const current = loadForUpdate(file);
+    const next = current.flatMap((entry) => entry.key === key ? withoutReceipts(entry, ids) ?? [] : [entry]);
+    if (JSON.stringify(next) === JSON.stringify(current))
+      return;
+    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync6(temporary, `${JSON.stringify(next)}
+`, { mode: 384 });
+    renameSync3(temporary, file);
+  });
+  if (result.kind === "failed")
+    throw leaseFailure(file, result);
+}
+
 // plugins/delivery/opencode/src/lane-move.ts
 var reasonOf = (error) => {
   try {
@@ -6411,6 +6399,190 @@ async function moveLaneHome(client, lane, destination) {
   if (!lane.complete)
     notes.push("the lane's sessions were listed incompletely; some may still point at the removed worktree");
   return notes;
+}
+
+// plugins/delivery/opencode/src/running-reports.ts
+import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
+import { mkdirSync as mkdirSync7, readdirSync as readdirSync4, renameSync as renameSync4, rmSync as rmSync6, statSync as statSync3, writeFileSync as writeFileSync7 } from "fs";
+import { join as join9, sep as sep3 } from "path";
+var MAX_REPORT_BYTES = 1024 * 1024;
+var runningDirectory = (receiptsRoot) => join9(receiptsRoot, ".running");
+var reportFile = (receiptsRoot, sessionID) => join9(runningDirectory(receiptsRoot), `${createHash4("sha1").update(sessionID).digest("hex")}.json`);
+var isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var optionalString = (value) => typeof value === "string" ? value : undefined;
+function parseReport(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return;
+  }
+  if (!isObject3(raw) || typeof raw.sessionID !== "string" || raw.sessionID === "")
+    return;
+  if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || typeof raw.pid !== "number")
+    return;
+  if (typeof raw.host !== "string" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
+    return;
+  const jobs = [];
+  for (const job of raw.jobs) {
+    if (!isObject3(job) || typeof job.kind !== "string")
+      return;
+    const sessionID = optionalString(job.sessionID);
+    const childSessionID = optionalString(job.childSessionID);
+    const shellID = optionalString(job.shellID);
+    const command = optionalString(job.command);
+    const cwd = optionalString(job.cwd);
+    jobs.push({
+      kind: job.kind,
+      ...sessionID === undefined ? {} : { sessionID },
+      ...childSessionID === undefined ? {} : { childSessionID },
+      ...shellID === undefined ? {} : { shellID },
+      ...command === undefined ? {} : { command },
+      ...cwd === undefined ? {} : { cwd }
+    });
+  }
+  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance };
+}
+function readStored(path) {
+  const read = readBoundedBytes(path, MAX_REPORT_BYTES);
+  if (read.kind === "absent")
+    return { kind: "absent" };
+  if (read.kind === "unreadable")
+    return { kind: "unreadable" };
+  const report = parseReport(read.bytes.toString("utf8"));
+  if (report === undefined)
+    return { kind: "unreadable" };
+  try {
+    return { kind: "report", report: { ...report, mtimeMs: statSync3(path).mtimeMs } };
+  } catch {
+    return { kind: "unreadable" };
+  }
+}
+function supersededOnDisk(file, sessionID, at) {
+  const stored = readStored(file);
+  return stored.kind === "report" && stored.report.sessionID === sessionID && stored.report.at > at;
+}
+function writeReport(receiptsRoot, report) {
+  const file = reportFile(receiptsRoot, report.sessionID);
+  if (supersededOnDisk(file, report.sessionID, report.at))
+    return "superseded";
+  const text = JSON.stringify(report);
+  if (Buffer.byteLength(text) > MAX_REPORT_BYTES)
+    throw new Error(`the report of ${report.sessionID} is larger than ${MAX_REPORT_BYTES} bytes`);
+  mkdirSync7(runningDirectory(receiptsRoot), { recursive: true });
+  const temp = `${file}.${randomUUID3()}.tmp`;
+  writeFileSync7(temp, text);
+  renameSync4(temp, file);
+  return "written";
+}
+function clearReport(receiptsRoot, sessionID, at) {
+  const file = reportFile(receiptsRoot, sessionID);
+  if (supersededOnDisk(file, sessionID, at))
+    return "superseded";
+  rmSync6(file, { force: true });
+  return "cleared";
+}
+function removeReport(receiptsRoot, sessionID) {
+  rmSync6(reportFile(receiptsRoot, sessionID), { force: true });
+}
+function readReports(receiptsRoot) {
+  const directory = runningDirectory(receiptsRoot);
+  let names;
+  try {
+    names = readdirSync4(directory).filter((name) => name.endsWith(".json"));
+  } catch (error) {
+    return { reports: [], unreadable: error.code !== "ENOENT" };
+  }
+  const reports = [];
+  let unreadable = false;
+  for (const name of names) {
+    const stored = readStored(join9(directory, name));
+    if (stored.kind === "report")
+      reports.push(stored.report);
+    else if (stored.kind === "unreadable")
+      unreadable = true;
+  }
+  return { reports, unreadable };
+}
+function reportsWritable(receiptsRoot) {
+  const directory = runningDirectory(receiptsRoot);
+  try {
+    mkdirSync7(directory, { recursive: true });
+    const probe = join9(directory, `.probe.${randomUUID3()}`);
+    writeFileSync7(probe, "");
+    rmSync6(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+var reportVersion = (report) => `${report.at}:${report.instance}:${JSON.stringify(report.jobs)}`;
+function reportLive(report, clock) {
+  if (clock.now - report.mtimeMs >= (clock.expiryMs ?? HOLD_EXPIRY_MS))
+    return false;
+  if (report.instance === clock.instance)
+    return true;
+  if (report.host === clock.host)
+    return clock.alive(report.pid);
+  return true;
+}
+var sameServer = (report, clock) => report.instance === clock.instance;
+var namesWorktree = (command, forms) => command !== undefined && forms.some((form) => command.includes(form));
+var jobSessions = (job) => [job.sessionID, job.childSessionID].filter((id) => typeof id === "string");
+var within3 = (directory, forms) => forms.some((form) => directory === form || directory.startsWith(form.endsWith(sep3) ? form : `${form}${sep3}`));
+function neededLookups(reports, forms, clock) {
+  const ids = new Set;
+  for (const report of reports) {
+    if (!reportLive(report, clock) || report.jobs.length === 0)
+      continue;
+    if (sameServer(report, clock))
+      ids.add(report.sessionID);
+    for (const job of report.jobs) {
+      if (namesWorktree(job.command, forms) || job.cwd !== undefined)
+        continue;
+      for (const id of jobSessions(job))
+        ids.add(id);
+    }
+  }
+  return [...ids];
+}
+function reportBlock(reports, forms, lookup, clock, canonical) {
+  for (const report of reports) {
+    if (!reportLive(report, clock) || report.jobs.length === 0)
+      continue;
+    const ours = sameServer(report, clock);
+    if (ours && lookup(report.sessionID)?.state === "missing")
+      continue;
+    for (const job of report.jobs) {
+      if (namesWorktree(job.command, forms))
+        return `session ${report.sessionID} has a ${job.kind} running that names the worktree`;
+      if (job.cwd !== undefined) {
+        if (within3(canonical(job.cwd), forms))
+          return `session ${report.sessionID} has a ${job.kind} running in the worktree`;
+        continue;
+      }
+      const owners = jobSessions(job);
+      if (owners.length === 0)
+        return `session ${report.sessionID} has a ${job.kind} whose working directory is unknown`;
+      for (const id of owners) {
+        const found = lookup(id);
+        if (found === undefined)
+          return `session ${report.sessionID} reported work in session ${id}, which has not been looked up`;
+        if (found.state === "unknown")
+          return `session ${report.sessionID} reported work in session ${id}, whose location could not be read`;
+        if (found.state === "missing") {
+          if (ours)
+            continue;
+          return `session ${report.sessionID} (another server) reported work in session ${id}, which this server cannot place`;
+        }
+        if (found.directory === undefined)
+          return `session ${report.sessionID} reported work in session ${id}, which has no working directory`;
+        if (within3(canonical(found.directory), forms))
+          return `session ${report.sessionID} has work in session ${id}, which runs in the worktree`;
+      }
+    }
+  }
+  return;
 }
 
 // plugins/delivery/opencode/src/pending-cleanup.ts
@@ -6484,7 +6656,7 @@ async function authorizeExplicit(pending, ask, sessionID, request) {
   if (deferred !== undefined)
     throw new CleanupDeferred(deferred);
 }
-var UNRESOLVED = Symbol("unresolved");
+var SERVER_INSTANCE = `${hostname2()}:${process.pid}:${Date.now().toString(36)}`;
 var SESSION_LOOKUP_MS = 5000;
 function createPendingCleanup(deps) {
   const { ctx, cwd, env } = deps;
@@ -6493,11 +6665,69 @@ function createPendingCleanup(deps) {
   const limit = deps.maxPerPass ?? MAX_PER_PASS;
   const observationMs = deps.cleanup?.bounds?.refReadMs ?? CLEANUP_BOUNDS.refReadMs;
   const sessionLookupMs = deps.sessionLookupMs ?? SESSION_LOOKUP_MS;
-  const unsafe = new Map;
+  const unrecorded = new Map;
+  let lastAt = 0;
+  const stamp = () => {
+    lastAt = Math.max(now(), lastAt + 1);
+    return lastAt;
+  };
+  const leaseFile = () => join10(receiptDirectory(env), ".running.lock");
+  const leaseOptions = () => ({
+    owner: "delivery running reports",
+    ...deps.lock?.waitMs === undefined ? {} : { waitMs: deps.lock.waitMs },
+    ...deps.lock?.ttlMs === undefined ? {} : { leaseMs: deps.lock.ttlMs },
+    ...deps.lock?.renewMs === undefined ? {} : { renewMs: deps.lock.renewMs },
+    ...deps.lock?.now === undefined ? {} : { now: deps.lock.now },
+    ...deps.lock?.host === undefined ? {} : { host: deps.lock.host },
+    ...deps.lock?.alive === undefined ? {} : { alive: deps.lock.alive },
+    ...deps.lock?.sleep === undefined ? {} : { sleep: deps.lock.sleep },
+    ...deps.lock?.seams === undefined ? {} : { seams: deps.lock.seams }
+  });
+  const underStore = async (work) => {
+    mkdirSync8(receiptDirectory(env), { recursive: true });
+    const result = await withLease(leaseFile(), leaseOptions(), work);
+    if (result.kind === "failed")
+      throw new Error(result.reason, { cause: result.cause });
+    return result.value;
+  };
+  const takeStore = async () => {
+    try {
+      mkdirSync8(receiptDirectory(env), { recursive: true });
+      let release = () => {};
+      const held = new Promise((done) => {
+        release = done;
+      });
+      let entered = () => {};
+      const inside = new Promise((done) => {
+        entered = () => done("held");
+      });
+      const running = withLease(leaseFile(), leaseOptions(), () => {
+        entered();
+        return held;
+      });
+      const first = await Promise.race([inside, running]);
+      if (first === "held") {
+        return {
+          release: async () => {
+            release();
+            await running;
+          }
+        };
+      }
+      return `the running-work store lease could not be taken (${first.kind === "failed" ? first.reason : "it was not entered"}), so running work cannot be ruled out`;
+    } catch (error) {
+      return `the running-work store lease could not be taken (${error instanceof Error ? error.message : String(error)}), so running work cannot be ruled out`;
+    }
+  };
+  const releaseStore = async (hold) => {
+    const lease = hold?.lease;
+    if (hold !== undefined)
+      hold.lease = undefined;
+    await lease?.release();
+  };
   const deniedInMemory = new Map;
   const deniedKey = (receipt) => `${receipt.repo.key}/${receipt.receiptId}`;
   const deniedWorktrees = new Set;
-  let holdReportsInFlight = 0;
   const doneIds = new Set;
   const retriedAt = new Map;
   const attemptedAt = new Map;
@@ -6567,7 +6797,7 @@ function createPendingCleanup(deps) {
     const directory = resolve7(receiptDirectory(env, key));
     let names;
     try {
-      names = readdirSync4(directory);
+      names = readdirSync5(directory);
     } catch (error) {
       return error.code !== "ENOENT";
     }
@@ -6576,7 +6806,7 @@ function createPendingCleanup(deps) {
       if (!RECEIPT_FILE2.test(name))
         continue;
       try {
-        const read = readReceipt(join9(directory, name));
+        const read = readReceipt(join10(directory, name));
         if (!read.ok)
           return true;
         receipts.push(read.receipt);
@@ -6586,6 +6816,7 @@ function createPendingCleanup(deps) {
     }
     return pendingReceipts(receipts).length > 0;
   };
+  const registryEntries = (sessionKey) => readClones(env, sessionKey);
   const cloneEntryFor = (receipt, commonDir) => ({
     key: receipt.repo.key,
     root: receipt.repo.canonicalRoot,
@@ -6599,13 +6830,13 @@ function createPendingCleanup(deps) {
     if (mine === null)
       return;
     try {
-      await addClone(env, mine.key, entry, (known) => mayHavePending(known.key));
+      await addClone(env, mine.key, entry, (known) => registrationNeeded(known, mayHavePending));
     } catch (error) {
       console.error(`delivery: could not record the clone ${entry.root}: ${error instanceof Error ? error.message : String(error)}`, error);
     }
   };
   const cloneEntries = (sessionKey) => {
-    const entries = new Map(readClones(env, sessionKey).map((entry) => [entry.key, entry]));
+    const entries = new Map(registryEntries(sessionKey).map((entry) => [entry.key, entry]));
     for (const [key, entry] of registered)
       entries.set(key, mergeClone(entries.get(key), entry));
     return [...entries.values()].filter((entry) => entry.key !== sessionKey && mayHavePending(entry.key));
@@ -6793,15 +7024,12 @@ function createPendingCleanup(deps) {
       await write(repo, entry.receiptId, entry.worktree, () => rest, { clearDenial: true });
     }
   };
-  const holdAt = async (repo, common, path) => {
+  const holdAtBase = async (repo, common, path) => {
     const owned = ownershipDeferral(ownershipAt(common, path));
     if (owned !== undefined)
       return owned;
     if (common === null)
       return "the git common directory could not be resolved";
-    const failed = unsafe.get(canonicalDirectory(path));
-    if (failed !== undefined)
-      return failed;
     const running = holdsState(common, path, now());
     if (running !== undefined)
       return running;
@@ -6833,6 +7061,7 @@ function createPendingCleanup(deps) {
       return `the sessions in ${path} could not be listed`;
     }
   };
+  const holdAt = async (repo, common, path) => await holdAtBase(repo, common, path) ?? await runningBlock(path);
   const landingBlockAt = (common, path) => {
     if (common === null)
       return "the git common directory could not be resolved";
@@ -6847,7 +7076,7 @@ function createPendingCleanup(deps) {
     }
     return;
   };
-  const holdCheckAt = async (repo, common, worktree) => await holdAt(repo, common, worktree) ?? landingBlockAt(common, worktree) ?? unsafe.get(canonicalDirectory(worktree)) ?? (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined);
+  const holdCheckAt = async (repo, common, worktree, hold) => await holdAtBase(repo, common, worktree) ?? landingBlockAt(common, worktree) ?? await runningBlock(worktree, hold);
   const holdCheck = async (repo, worktree) => holdCheckAt(repo, await commonOf(repo), worktree);
   const proofIn = (repo) => async (worktree, read) => {
     const common = await commonOf(repo);
@@ -6858,13 +7087,23 @@ function createPendingCleanup(deps) {
       return outcome.value;
     return { ok: false, reason: `worktree.held: observed ${outcome.reason}, expected no competing remover; nothing was removed` };
   };
-  const sectionIn = (repo) => async (worktree, run) => {
+  const sectionIn = (repo, hold) => async (worktree, run) => {
     const common = await commonOf(repo);
     if (common === null)
       return { ok: false, reason: UNRESOLVED_COMMON };
     const outcome = await lockedWorktreeRemoval(common, worktree, { sessionID: "delivery", now, ...deps.lock }, {
       recheck: () => holdCheck(repo, worktree),
-      remove: run
+      remove: async () => {
+        if (hold !== undefined)
+          hold.active = true;
+        try {
+          return await run();
+        } finally {
+          if (hold !== undefined)
+            hold.active = false;
+          await releaseStore(hold);
+        }
+      }
     });
     if (outcome.removed)
       return outcome.value;
@@ -6876,12 +7115,13 @@ function createPendingCleanup(deps) {
     const client = ctx.session;
     let roots = [];
     let forms = [];
+    const hold = { active: false, lease: undefined };
     return {
       proofSection: proofIn(repo),
-      removalSection: sectionIn(repo),
+      removalSection: sectionIn(repo, hold),
       finalCheck: async (worktree) => {
         const common = await commonOf(repo);
-        const held = await holdCheckAt(repo, common, worktree);
+        const held = await holdCheckAt(repo, common, worktree, hold);
         if (held !== undefined)
           return held;
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID);
@@ -6951,7 +7191,7 @@ function createPendingCleanup(deps) {
       }
       let pendingLeft;
       try {
-        readdirSync4(directory);
+        readdirSync5(directory);
         pendingLeft = pendingReceipts(listReceipts(directory)).some((receipt) => !settled.has(receipt.receiptId));
       } catch {
         pendingLeft = true;
@@ -6973,7 +7213,14 @@ function createPendingCleanup(deps) {
     const mine = own.veto() ?? await own.observe();
     if (mine === null)
       return;
-    const entries = new Map(readClones(env, mine.key).map((entry) => [entry.key, entry]));
+    let listed;
+    try {
+      listed = registryEntries(mine.key);
+    } catch (error) {
+      console.error("delivery: the clone registry could not be read; no clone is settled", error);
+      return;
+    }
+    const entries = new Map(listed.map((entry) => [entry.key, entry]));
     for (const [key, entry] of registered)
       entries.set(key, mergeClone(entries.get(key), entry));
     for (const entry of entries.values())
@@ -6981,7 +7228,12 @@ function createPendingCleanup(deps) {
         await settleClone(mine.key, entry);
   };
   const gc = async (receipt) => {
-    const repos = [own, ...await clones()];
+    const repos = [own];
+    try {
+      repos.push(...await clones());
+    } catch (error) {
+      console.error("delivery: the clones could not be listed", error);
+    }
     const named = receipt === undefined ? null : await repositoryOf(receipt);
     if (named?.foreign === true && !repos.some((repo) => repo.cwd === named.cwd))
       repos.push(named);
@@ -7006,7 +7258,7 @@ function createPendingCleanup(deps) {
     await gcIn(repo);
     const present = [];
     for (const receipt of pending) {
-      if (receipt.worktree.path !== null && !existsSync4(receipt.worktree.path)) {
+      if (receipt.worktree.path !== null && !existsSync3(receipt.worktree.path)) {
         doneIds.add(idOf(receipt));
         finished.add(receipt.receiptId);
         if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
@@ -7082,7 +7334,13 @@ function createPendingCleanup(deps) {
     await runIn(own, sessionID, idle);
     const mine = own.veto() ?? await own.observe();
     if (mine !== null) {
-      for (const entry of cloneEntries(mine.key)) {
+      let entries = [];
+      try {
+        entries = cloneEntries(mine.key);
+      } catch (error) {
+        console.error("delivery: the clones could not be listed; none is cleaned", error);
+      }
+      for (const entry of entries) {
         if (disposed)
           return;
         const repo = await cloneAt(entry);
@@ -7113,100 +7371,111 @@ function createPendingCleanup(deps) {
       return;
     if (event.type === "session.idle")
       schedule(sessionID, true);
+    else if (event.type === "session.deleted")
+      return forgetSession(sessionID);
     else if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed")
       schedule(sessionID, false);
+    return;
   };
-  const sessionLocation = (id) => {
+  const sessionState = (id) => {
     let timer;
     const bound = new Promise((done) => {
-      timer = setTimeout(() => done(UNRESOLVED), sessionLookupMs);
+      timer = setTimeout(() => done({ state: "unknown" }), sessionLookupMs);
     });
-    const lookup = Promise.resolve().then(() => ctx.session.get({ sessionID: id })).then((session) => session?.location?.directory, () => {
-      return;
-    });
+    const lookup = Promise.resolve().then(() => ctx.session.get({ sessionID: id })).then((session) => ({ state: "at", directory: session?.location?.directory }), (error) => isSessionNotFound(error, id) ? { state: "missing" } : { state: "unknown" });
     return Promise.race([lookup, bound]).finally(() => clearTimeout(timer));
   };
-  const recordHolds = async (sessionID, background) => {
-    if (background.length === 0)
-      return writeHolds(sessionID, background);
-    holdReportsInFlight++;
-    try {
-      await writeHolds(sessionID, background);
-    } finally {
-      holdReportsInFlight--;
-    }
-  };
-  const writeHolds = async (sessionID, background) => {
-    const locations = new Map;
-    const locationOf = (id) => {
-      let found = locations.get(id);
-      if (found === undefined) {
-        found = sessionLocation(id);
-        locations.set(id, found);
-      }
-      return found;
+  const reportClock = () => ({ now: (deps.fileNow ?? Date.now)(), host: hostname2(), instance: SERVER_INSTANCE, alive: processAlive });
+  const runningBlock = async (worktree, hold) => {
+    const stuck = () => {
+      const first = unrecorded.entries().next().value;
+      return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1]}); held until it reports again or is deleted`;
     };
-    const inClones = async () => {
-      const mine = own.veto() ?? await own.observe();
-      if (mine === null)
+    const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out";
+    const root = receiptDirectory(env);
+    const early = stuck();
+    if (early !== undefined)
+      return early;
+    if (!reportsWritable(root))
+      return "the running-work store is not writable, so running work cannot be ruled out";
+    const forms = [...new Set([worktree, canonicalDirectory(worktree)])];
+    const first = readReports(root);
+    if (first.unreadable)
+      return unreadable;
+    const seen = new Map(first.reports.map((report) => [report.sessionID, reportVersion(report)]));
+    const cache = new Map;
+    const lookUp = async (ids) => {
+      await Promise.all(ids.map(async (id) => void cache.set(id, await sessionState(id))));
+    };
+    await lookUp(neededLookups(first.reports, forms, reportClock()));
+    let leased = false;
+    if (hold?.active === true) {
+      await releaseStore(hold);
+      const taken = await takeStore();
+      if (typeof taken === "string")
+        return taken;
+      hold.lease = taken;
+      leased = true;
+    }
+    const refuse = async (why) => {
+      if (leased)
+        await releaseStore(hold);
+      return why;
+    };
+    try {
+      const again = stuck();
+      if (again !== undefined)
+        return await refuse(again);
+      const last = readReports(root);
+      if (last.unreadable)
+        return await refuse(unreadable);
+      if (leased)
+        await lookUp(neededLookups(last.reports.filter((report) => seen.get(report.sessionID) !== reportVersion(report)), forms, reportClock()));
+      const blocked = reportBlock(last.reports, forms, (id) => cache.get(id), reportClock(), canonicalDirectory);
+      if (blocked === undefined)
         return;
-      await Promise.all(cloneEntries(mine.key).map(async (entry) => {
-        const repo = await cloneAt(entry);
-        if (repo !== null)
-          await writeHoldsIn(repo, sessionID, background, locationOf);
-      }));
-    };
-    await Promise.all([writeHoldsIn(own, sessionID, background, locationOf), inClones()]);
+      console.error(`delivery: cleanup of ${worktree} is held: ${blocked}`);
+      return await refuse(blocked);
+    } catch (error) {
+      if (leased)
+        await releaseStore(hold);
+      throw error;
+    }
   };
-  const writeHoldsIn = async (repo, sessionID, background, locationOf) => {
-    const location = repo.veto() ?? await repo.observe();
-    if (location === null)
-      return;
-    const { commonDir: common, key } = location;
-    let pending;
-    try {
-      pending = pendingReceipts(listReceipts(resolve7(receiptDirectory(env, key)))).slice(0, 100);
-    } catch {
-      return;
-    }
-    const writes = new Map;
-    for (const receipt of pending) {
-      const path = receipt.worktree.path;
-      if (path === null)
-        continue;
-      const want = canonicalDirectory(path);
-      const jobs = [];
-      for (const job of background) {
-        let inside = job.kind === "shell" && typeof job.command === "string" && job.command.includes(path);
-        for (const id of [job.sessionID, job.childSessionID]) {
-          if (inside || typeof id !== "string")
-            continue;
-          const where = await locationOf(id);
-          if (where === UNRESOLVED || where !== undefined && canonicalDirectory(where) === want)
-            inside = true;
-        }
-        if (inside)
-          jobs.push({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" });
-      }
-      const prior = writes.get(want)?.jobs ?? [];
-      writes.set(want, { path, jobs: [...prior, ...jobs.filter((job) => !prior.some((kept) => kept.kind === job.kind && kept.id === job.id))] });
-    }
-    await Promise.all([...writes].map(async ([want, { path, jobs }]) => {
-      try {
-        await recordHold(common, path, sessionID, jobs, now(), { sessionID: "delivery", now, ...deps.lock });
-        unsafe.delete(want);
-      } catch (error) {
-        const why = error instanceof Error ? error.message : String(error);
-        unsafe.set(want, `its running work could not be recorded (${why})`);
-        console.error(`delivery: could not record holds for ${path}: ${why}`);
-      }
+  const recordHolds = async (sessionID, background) => {
+    const root = receiptDirectory(env);
+    const at = stamp();
+    const jobs = background.map((job) => ({
+      kind: job.kind,
+      ...job.sessionID === undefined ? {} : { sessionID: job.sessionID },
+      ...job.childSessionID === undefined ? {} : { childSessionID: job.childSessionID },
+      ...job.shellID === undefined ? {} : { shellID: job.shellID },
+      ...job.command === undefined ? {} : { command: job.command },
+      ...typeof job.cwd === "string" ? { cwd: canonicalDirectory(job.cwd) } : {}
     }));
+    try {
+      await underStore(() => background.length === 0 ? clearReport(root, sessionID, at) : writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: SERVER_INSTANCE }));
+      unrecorded.delete(sessionID);
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      if (background.length > 0)
+        unrecorded.set(sessionID, why);
+      console.error(`delivery: could not record the running work of ${sessionID}: ${why}`);
+    }
+  };
+  const forgetSession = async (sessionID) => {
+    unrecorded.delete(sessionID);
+    try {
+      await underStore(() => removeReport(receiptDirectory(env), sessionID));
+    } catch (error) {
+      console.error(`delivery: could not remove the report of deleted session ${sessionID}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
   const registrations = [];
   let watching;
   const start = async () => {
     watching = watchEvents({
-      subscribe: (signal) => ctx.event.subscribe({ types: ["session.execution.succeeded", "session.execution.failed", "session.idle"], signal })[Symbol.asyncIterator](),
+      subscribe: (signal) => ctx.event.subscribe({ types: ["session.execution.succeeded", "session.execution.failed", "session.idle", "session.deleted"], signal })[Symbol.asyncIterator](),
       handle: handleEvent,
       warn: (message, fields) => console.warn(`delivery: ${message}`, fields),
       label: "pending cleanup",
@@ -7214,11 +7483,7 @@ function createPendingCleanup(deps) {
     });
     try {
       registrations.push(await ctx.session.hook("experimental.idle", async (input) => {
-        try {
-          await recordHolds(input.sessionID, input.background ?? []);
-        } catch (error) {
-          console.error("delivery: recording holds failed", error);
-        }
+        await recordHolds(input.sessionID, input.background ?? []);
         await retryNow(input.sessionID, true);
       }));
     } catch {}
@@ -7244,6 +7509,7 @@ function createPendingCleanup(deps) {
     dispose,
     prime,
     record,
+    unrecordedCount: () => unrecorded.size,
     deny: denyIn(own),
     arm: armIn(own),
     markNudged: (receiptId, worktree) => markNudged(receiptId, worktree),

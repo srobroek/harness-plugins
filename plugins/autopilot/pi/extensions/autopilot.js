@@ -1114,7 +1114,7 @@ async function withLease(lockPath, options, work) {
       }
       const code = error.code;
       if (code !== "EEXIST")
-        return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})` };
+        return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})`, cause: error };
       if (readBounded(lockPath).kind === "unreadable" || readBounded(c.steal).kind === "unreadable") {
         return { kind: "failed", reason: `the lock path ${lockPath} (or its steal lock) is not a small regular file, so its holder cannot be read safely` };
       }

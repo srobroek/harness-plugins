@@ -5,13 +5,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { landingFile, readLanding, removeClaim, writeClaim } from "@srobroek/opencode-lib/worktree-claims"
-import { holdsState } from "@srobroek/opencode-lib/worktree-locks"
 import type { CleanupDeps, CleanupResult } from "./cleanup.ts"
 import * as realCleanup from "./cleanup.ts"
 import { registryFile } from "./clone-registry.ts"
 import { type CliRunner, runCli } from "./forge-adapter.ts"
 import * as realLand from "./land.ts"
 import { buildReceipt, type GitRunner, type LandingReceipt, listReceipts, receiptDirectory, repositoryContext, writeReceipt } from "./landing-receipt.ts"
+import { readReports, runningDirectory } from "./running-reports.ts"
 
 // Landing needs a forge and cleanup needs a real remote; both are replaced so the test sees only how
 // the registered tools and the turn-end retry chain them across two real repositories: the session's
@@ -125,6 +125,20 @@ type Session = {
   dispose: () => Promise<void>
 }
 
+/**
+ * The host has every session that reports through the idle hook: a report whose own session the host does
+ * not have is skipped as a dead reporter's, so a session that reports must exist (a test that wants it
+ * gone deletes it from `fake.sessions`).
+ */
+function hostHasReporters(fake: ReturnType<typeof createFakeContext>, directory: string) {
+  const fire = fake.fire.session
+  fake.fire.session = ((name: string, input: unknown) => {
+    const id = (input as { sessionID?: unknown } | undefined)?.sessionID
+    if (name === "experimental.idle" && typeof id === "string" && !fake.sessions.has(id)) fake.sessions.set(id, { id, location: { directory } })
+    return fire(name as never, input as never)
+  }) as typeof fake.fire.session
+}
+
 /** A fresh `setupDelivery`: a new process, as after a server restart. */
 async function session(
   sessionID = "s",
@@ -132,6 +146,7 @@ async function session(
   observe?: GitRunner,
 ): Promise<Session> {
   const fake = createFakeContext({ directory: repoA })
+  hostHasReporters(fake, repoA)
   const context = fake.context as unknown as { location: unknown; worktree: unknown; options: unknown }
   context.location = { ...(context.location as object), project: { id: "prj" } }
   context.options = { receiptsDirectory: receiptsRoot }
@@ -216,6 +231,11 @@ test("a lane claim in the target keeps the retry from cleaning, and the registra
 /** Land in B, then write the cleaned receipt that settles it; returns what the tests need to clean it up. */
 async function landAndSettle(s: Session) {
   await s.land()
+  return settleRegistered()
+}
+
+/** Write the cleaned receipt that settles the registered landing in B. */
+async function settleRegistered() {
   const registry = await registryOf()
   const [receiptId] = (registry?.clones[0]?.receiptIds as string[] | undefined) ?? []
   const directory = receiptDirectory(env(), registry?.clones[0]?.key as string)
@@ -268,7 +288,7 @@ test("a clone stays registered while another receipt of its repository is still 
     expect((await registryOf())?.clones).toHaveLength(1)
     // The clone is still discovered: a shell in the second worktree holds it ...
     await s.idle([{ kind: "shell", shellID: "sh1", command: `tail -f ${other}/log` }])
-    expect(holdsState(commonB, other, Date.now())).toBeDefined()
+    expect(readReports(receiptsRoot).reports.map((report) => report.sessionID)).toEqual(["s"])
     // ... and its cleanup is retried once the retry window has passed.
     cleanupCalls = []
     cleanupResult = REMOVED
@@ -487,14 +507,16 @@ test("a shell another session reports in the target worktree is held, though tha
   await lander.land()
   const reporter = await session("reporter")
   await reporter.idle([{ kind: "shell", shellID: "sh1", command: `tail -f ${worktree}/log` }])
-  expect(holdsState(commonB, worktree, Date.now())).toBeDefined()
+  // Both instances serve one host: the lander can find the reporter's session there.
+  lander.fake.sessions.set("reporter", { id: "reporter", location: { directory: repoA } })
+  expect(readReports(receiptsRoot).reports.map((report) => report.sessionID)).toEqual(["reporter"])
   cleanupCalls = []
   cleanupResult = REMOVED
   await lander.idle()
   expect(cleanupCalls).toEqual([])
 })
 
-test("a registration that cannot be persisted stays in memory: the retry and the holds still reach the clone", async () => {
+test("a registration that cannot be persisted stays in memory: the retry still reaches the clone, and a reported shell holds it", async () => {
   const errors = spyOn(console, "error").mockImplementation(() => {})
   try {
     // `.clones` is a file, so the registry cannot be written.
@@ -504,10 +526,257 @@ test("a registration that cannot be persisted stays in memory: the retry and the
     cleanupCalls = []
     cleanupResult = REMOVED
     await s.idle([{ kind: "shell", shellID: "sh1", command: `tail -f ${worktree}/log` }])
-    expect(holdsState(commonB, worktree, Date.now())).toBeDefined()
+    expect(readReports(receiptsRoot).reports.map((report) => report.sessionID)).toEqual(["s"])
     expect(cleanupCalls).toEqual([])
     await s.idle([])
     expect(cleanupCalls).toHaveLength(1)
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+/** The target's identity as a cleanup in its clone hands it to `coordinate`. */
+const targetIdentity = async () => ({ common: commonB, root: (await repositoryContext(repoB))?.ledger.root as string })
+
+/** The coordination a cleanup in the target gets from the last cleanup call's deps. */
+const lastCoordination = async () => {
+  const deps = cleanupCalls.at(-1)?.deps as unknown as { coordinate: (identity: unknown) => Promise<{ finalCheck: (worktree: string) => Promise<string | undefined> }> }
+  return deps.coordinate(await targetIdentity())
+}
+
+/** Make the target's receipt directory unreadable while `work` runs. */
+const withUnreadableReceipts = async (work: () => Promise<unknown>) => {
+  const directory = receiptDirectory(env(), (await repositoryContext(repoB))?.key as string)
+  chmodSync(directory, 0o000) // check-test-executables: directory permission, not a script
+  try {
+    await work()
+  } finally {
+    chmodSync(directory, 0o700) // check-test-executables: directory permission, not a script
+  }
+}
+
+const SHELL = () => [{ kind: "shell", shellID: "sh1", command: `tail -f ${worktree}/log` }]
+
+test("an unreadable clone registry does not stop an explicit cleanup in the target: the final check allows it", async () => {
+  if (process.getuid?.() === 0) return // root reads any file
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const first = await session()
+    await first.land()
+    const receiptId = (((await registryOf())?.clones[0]?.receiptIds as string[] | undefined) ?? [])[0] as string
+    await first.dispose()
+    const file = registryFile(env(), (await repositoryContext(repoA))?.key as string)
+    // No idle pass runs in the fresh instance: only the removal's own checks can see the registry.
+    const fresh = await session()
+    let refused: string | undefined
+    onCleanup = (() =>
+      (async () => {
+        chmodSync(file, 0o000) // check-test-executables: registry file permission, not a script
+        try {
+          refused = await (await lastCoordination()).finalCheck(worktree)
+        } finally {
+          chmodSync(file, 0o600) // check-test-executables: registry file permission, not a script
+        }
+        return FAILED
+      })()) as never
+    await fresh.cleanup({ receipt: join(receiptDirectory(env(), (await repositoryContext(repoB))?.key as string), `${receiptId}.json`), repo: "o/b", repoPath: repoB })
+    // The registry only tells the retry where receipts are; the final check reads no registry.
+    expect(refused).toBeUndefined()
+    expect(await (await lastCoordination()).finalCheck(worktree)).toBeUndefined()
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+// I2: only the session that reported clears its report.
+test("another session's report of nothing running does not lift a session's hold; its own report of nothing does", async () => {
+  const s = await session()
+  await s.land()
+  cleanupResult = REMOVED
+  await s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
+  cleanupCalls = []
+  await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
+  expect(cleanupCalls).toEqual([])
+  expect(readReports(receiptsRoot).reports.map((report) => report.sessionID)).toEqual(["a"])
+  await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
+  expect(cleanupCalls).toHaveLength(1)
+})
+
+test("a report that cannot be written while the final check lists sessions refuses the removal", async () => {
+  if (process.getuid?.() === 0) return // root writes into a read-only directory
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const s = await session()
+    await s.land()
+    const client = s.fake.context.session as unknown as { list: (query: Record<string, unknown>) => Promise<unknown> }
+    const list = client.list.bind(client)
+    let gate: { started: () => void; release: Promise<void> } | undefined
+    client.list = async (query) => {
+      const held = gate
+      if (held !== undefined && "directory" in query) {
+        gate = undefined
+        held.started()
+        await held.release
+      }
+      return list(query)
+    }
+    const receiptId = (((await registryOf())?.clones[0]?.receiptIds as string[] | undefined) ?? [])[0] as string
+    const reports = runningDirectory(receiptsRoot)
+    mkdirSync(reports, { recursive: true })
+    let refused: string | undefined
+    onCleanup = (() =>
+      (async () => {
+        onCleanup = undefined // the one cleanup this test drives; a later retry just gets the default result
+        let started: () => void = () => {}
+        let release: () => void = () => {}
+        const listing = new Promise<void>((done) => {
+          started = done
+        })
+        gate = { started, release: new Promise<void>((done) => (release = done)) }
+        const check = (await lastCoordination()).finalCheck(worktree)
+        await listing
+        // While the listing is awaited, a session's shell report cannot be written.
+        chmodSync(reports, 0o555) // check-test-executables: directory permission, not a script
+        try {
+          await s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
+        } finally {
+          chmodSync(reports, 0o755) // check-test-executables: directory permission, not a script
+        }
+        release()
+        refused = await check
+        return FAILED
+      })()) as never
+    await s.cleanup({ receipt: join(receiptDirectory(env(), (await repositoryContext(repoB))?.key as string), `${receiptId}.json`), repo: "o/b", repoPath: repoB })
+    expect(refused).toContain("the running work of a could not be recorded")
+    // The session's next successful write lifts it.
+    expect(await (await lastCoordination()).finalCheck(worktree)).toContain("the running work of a could not be recorded")
+    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
+    expect(await (await lastCoordination()).finalCheck(worktree)).toBeUndefined()
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+/** The receipt path of the session's registered landing in the target. */
+const landedReceipt = async () => {
+  const receiptId = (((await registryOf())?.clones[0]?.receiptIds as string[] | undefined) ?? [])[0] as string
+  return join(receiptDirectory(env(), (await repositoryContext(repoB))?.key as string), `${receiptId}.json`)
+}
+
+test("a deleted session's report goes, and while it holds the log names the session and the worktree", async () => {
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const s = await session()
+    await s.land()
+    cleanupResult = REMOVED
+    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
+    cleanupCalls = []
+    errors.mockClear()
+    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
+    expect(cleanupCalls).toEqual([])
+    const logged = errors.mock.calls.map((call) => String(call[0])).join("\n")
+    expect(logged).toContain("session a has a shell running that names the worktree")
+    // Resolves once the plugin's subscription has handled it.
+    await s.fake.emit({ type: "session.deleted", data: { sessionID: "a" } })
+    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
+    expect(cleanupCalls).toHaveLength(1)
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+test("a registry that becomes unreadable while the final check lists sessions does not change the check: it allows the removal", async () => {
+  if (process.getuid?.() === 0) return // root reads any file
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const s = await session()
+    await s.land()
+    const file = registryFile(env(), (await repositoryContext(repoA))?.key as string)
+    const client = s.fake.context.session as unknown as { list: (query: Record<string, unknown>) => Promise<unknown> }
+    const list = client.list.bind(client)
+    let armed = false
+    client.list = async (query) => {
+      if (armed && "directory" in query) {
+        armed = false
+        // The final check reads no registry, so this changes nothing for it.
+        chmodSync(file, 0o000) // check-test-executables: registry file permission, not a script
+      }
+      return list(query)
+    }
+    let refused: string | undefined
+    onCleanup = (() =>
+      (async () => {
+        armed = true
+        try {
+          refused = await (await lastCoordination()).finalCheck(worktree)
+        } finally {
+          chmodSync(file, 0o600) // check-test-executables: registry file permission, not a script
+        }
+        return FAILED
+      })()) as never
+    await s.cleanup({ receipt: await landedReceipt(), repo: "o/b", repoPath: repoB })
+    expect(refused).toBeUndefined()
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+/** Hide the session's repository from git and from its `.git` marker while `work` runs. */
+const withoutSourceRepository = async (work: () => Promise<void>) => {
+  const marker = join(repoA, ".git")
+  const away = `${marker}.away`
+  renameSync(marker, away)
+  try {
+    await work()
+  } finally {
+    renameSync(away, marker)
+  }
+}
+
+test("a fresh instance whose own repository resolves neither by git nor by its .git marker still checks the target, and allows its cleanup", async () => {
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const first = await session()
+    await first.land()
+    const receipt = await landedReceipt()
+    await first.dispose()
+    let refused: string | undefined
+    await withoutSourceRepository(async () => {
+      const fresh = await session()
+      onCleanup = (() =>
+        (async () => {
+          refused = await (await lastCoordination()).finalCheck(worktree)
+          return FAILED
+        })()) as never
+      await fresh.cleanup({ receipt, repo: "o/b", repoPath: repoB })
+    })
+    // The final check in the target needs the target alone: no registry, so no session repository.
+    expect(refused).toBeUndefined()
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+test("a report of running work while the session's repository resolves neither way is kept whole, and holds the target", async () => {
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const first = await session()
+    await first.land()
+    const receipt = await landedReceipt()
+    await first.dispose()
+    let fresh: Session | undefined
+    await withoutSourceRepository(async () => {
+      fresh = await session()
+      await fresh.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
+    })
+    let refused: string | undefined
+    onCleanup = (() =>
+      (async () => {
+        refused = await (await lastCoordination()).finalCheck(worktree)
+        return FAILED
+      })()) as never
+    await fresh?.cleanup({ receipt, repo: "o/b", repoPath: repoB })
+    expect(refused).toContain("session a has a shell running that names the worktree")
   } finally {
     errors.mockRestore()
   }

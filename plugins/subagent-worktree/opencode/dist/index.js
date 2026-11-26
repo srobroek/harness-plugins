@@ -65,7 +65,7 @@ function withOptionalString(input, name, description) {
 
 // lib/src/worktree-claims.ts
 import { createHash } from "crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 var MAX_FILE_BYTES = 64 * 1024;
 var MAX_LANDINGS = 500;
@@ -186,8 +186,11 @@ function removeClaim(commonDir, directory) {
 }
 function listLandings(commonDir) {
   const directory = join(commonDir, "opencode", "landings");
-  if (!existsSync(directory))
-    return { records: [], unreadable: false };
+  try {
+    statSync(directory);
+  } catch (error) {
+    return { records: [], unreadable: error.code !== "ENOENT" };
+  }
   let names;
   try {
     names = readdirSync(directory).filter((name) => name.endsWith(".json"));
@@ -220,7 +223,7 @@ import { join as join2 } from "path";
 // lib/src/lease-lock.ts
 import { AsyncLocalStorage } from "async_hooks";
 import { randomUUID } from "crypto";
-import { closeSync as closeSync2, openSync as openSync2, statSync, unlinkSync, writeSync } from "fs";
+import { closeSync as closeSync2, openSync as openSync2, statSync as statSync2, unlinkSync, writeSync } from "fs";
 import { hostname } from "os";
 
 // lib/src/bounded-read.ts
@@ -436,7 +439,7 @@ function backoffDelayMs(attempt, random = Math.random) {
 }
 var ageOf = (path, now) => {
   try {
-    return now - statSync(path).mtimeMs;
+    return now - statSync2(path).mtimeMs;
   } catch {
     return 0;
   }
@@ -558,7 +561,7 @@ async function withLease(lockPath, options, work) {
       }
       const code = error.code;
       if (code !== "EEXIST")
-        return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})` };
+        return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})`, cause: error };
       if (readBounded(lockPath).kind === "unreadable" || readBounded(c.steal).kind === "unreadable") {
         return { kind: "failed", reason: `the lock path ${lockPath} (or its steal lock) is not a small regular file, so its holder cannot be read safely` };
       }
@@ -1570,7 +1573,7 @@ function createGit(run) {
 }
 
 // plugins/subagent-worktree/opencode/src/lifecycle.ts
-import { existsSync as existsSync2, realpathSync as realpathSync2 } from "fs";
+import { existsSync, realpathSync as realpathSync2 } from "fs";
 import { join as join3, resolve as resolve2 } from "path";
 
 // lib/src/session-eviction.ts
@@ -1994,7 +1997,7 @@ function createLifecycle(deps) {
   const busyTreeOf = async (directory, branch) => {
     const dir = await git.gitDir(directory);
     if (dir !== undefined) {
-      const operations = operationsInProgress(OPERATION_MARKERS.map((marker) => marker.name).filter((name) => existsSync2(join3(dir, name))));
+      const operations = operationsInProgress(OPERATION_MARKERS.map((marker) => marker.name).filter((name) => existsSync(join3(dir, name))));
       if (operations.length > 0)
         return `a ${operations.join(", ")} is in progress`;
     }
@@ -2799,7 +2802,7 @@ function createLifecycle(deps) {
     const lanes = (await deps.scan()).filter((lane) => lane.state === "active" || lane.state === "removing");
     if (lanes.length === 0)
       return;
-    const gone = (path) => !existsSync2(path);
+    const gone = (path) => !existsSync(path);
     const lane = laneForLanding(event.result, lanes, canonical, gone);
     if (lane)
       await finalize(lane, { gone: true, retireAs: "landed" });

@@ -159,3 +159,89 @@ describe("mergeClone and withoutReceipts", () => {
     expect(mergeClone({ ...A, receiptIds: ["r1"] }, { ...A, root: "/moved", receiptIds: ["r2"] })).toEqual({ ...A, root: "/moved", receiptIds: ["r1", "r2"] })
   })
 })
+
+describe("readClones", () => {
+  const roots: string[] = []
+  afterAll(() => {
+    for (const root of roots) rmSync(root, { recursive: true, force: true })
+  })
+  const store = (): NodeJS.ProcessEnv => {
+    const root = mkdtempSync(join(tmpdir(), "delivery-clones-read-"))
+    roots.push(root)
+    return { DELIVERY_RECEIPTS_DIR: join(root, "receipts") }
+  }
+  const SESSION = "c".repeat(16)
+
+  test("a registry that does not exist is empty", () => {
+    expect(readClones(store(), SESSION)).toEqual([])
+  })
+
+  test("a registry that cannot be read is an error naming the cause, never an empty list", async () => {
+    const receipts = store()
+    await addClone(receipts, SESSION, A, () => false)
+    const file = registryFile(receipts, SESSION)
+    chmodSync(file, 0o000) // check-test-executables: registry file permission, not a script
+    try {
+      let failure: unknown
+      try {
+        readClones(receipts, SESSION)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toBeInstanceOf(Error)
+      expect(((failure as Error).cause as NodeJS.ErrnoException | undefined)?.code).toBe("EACCES")
+    } finally {
+      chmodSync(file, 0o600) // check-test-executables: registry file permission, not a script
+    }
+  })
+
+  test("a registry that is not JSON is an error with the parse failure as its cause, never an empty list", () => {
+    const receipts = store()
+    const file = registryFile(receipts, SESSION)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, "{not json")
+    expect(() => readClones(receipts, SESSION)).toThrow(/cannot be parsed/)
+    let failure: unknown
+    try {
+      readClones(receipts, SESSION)
+    } catch (error) {
+      failure = error
+    }
+    expect((failure as Error).cause).toBeInstanceOf(SyntaxError)
+  })
+
+  test("a registry that is JSON but not a list is an error, never an empty list", () => {
+    const receipts = store()
+    const file = registryFile(receipts, SESSION)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, "{}")
+    expect(() => readClones(receipts, SESSION)).toThrow(/cannot be parsed as a JSON list/)
+  })
+})
+
+describe("registry lock failure", () => {
+  const updates = [
+    ["addClone", (receipts: NodeJS.ProcessEnv, session: string) => addClone(receipts, session, A, () => false)],
+    ["settleReceipts", (receipts: NodeJS.ProcessEnv, session: string) => settleReceipts(receipts, session, A.key, new Set(["r1"]))],
+  ] as const
+  test.each(updates)("%s keeps the original failure as the cause", async (_name, update) => {
+    const root = mkdtempSync(join(tmpdir(), "delivery-clones-lock-"))
+    const receipts = { DELIVERY_RECEIPTS_DIR: join(root, "receipts") }
+    const session = "c".repeat(16)
+    const directory = dirname(registryFile(receipts, session))
+    mkdirSync(directory, { recursive: true })
+    chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+    try {
+      const failure = await update(receipts, session).then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message).toContain("could not be updated")
+      expect(((failure as Error).cause as NodeJS.ErrnoException | undefined)?.code).toBe("EACCES")
+    } finally {
+      chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})

@@ -99,8 +99,11 @@ export type FakeContext = {
   }
   /** Names of the hooks currently registered per domain, in registration order. */
   hooks: (domain: Domain) => string[]
-  /** Deliver an event to every open `event.subscribe` iterator. */
-  emit: (event: unknown) => void
+  /**
+   * Deliver an event to every open `event.subscribe` iterator whose `types` include its type (all, when
+   * it named none). Resolves once each of them has handled it: asked for the next event, or closed.
+   */
+  emit: (event: unknown) => Promise<void>
   /** End every open `event.subscribe` iterator. */
   closeEvents: () => void
   /** Number of registrations not yet disposed. */
@@ -217,28 +220,47 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
     await options.assert?.(input)
   }
 
-  type Subscriber = { queue: unknown[]; closed: boolean; wake?: () => void }
+  /** An event waiting for a subscriber, and the acknowledgement `emit` resolves on once it is handled. */
+  type Queued = { event: unknown; handled: () => void }
+  /**
+   * One `event.subscribe` iterator: the types it asked for (all when absent), what it has not taken
+   * yet, and the acknowledgement of the event it is handling now.
+   */
+  type Subscriber = { types?: ReadonlySet<string>; queue: Queued[]; closed: boolean; wake?: () => void; handling?: () => void }
   const subscribers = new Set<Subscriber>()
+  /** Acknowledge what `subscriber` holds: the event it is handling and every one still queued. */
+  const release = (subscriber: Subscriber) => {
+    subscriber.handling?.()
+    subscriber.handling = undefined
+    for (const queued of subscriber.queue.splice(0)) queued.handled()
+  }
   const subscribe = (input?: unknown): AsyncIterable<unknown> => {
     calls.push({ method: "event.subscribe", input })
-    const subscriber: Subscriber = { queue: [], closed: false }
+    const types = (input as { types?: unknown } | undefined)?.types
+    const subscriber: Subscriber = { queue: [], closed: false, ...(Array.isArray(types) ? { types: new Set(types as string[]) } : {}) }
     subscribers.add(subscriber)
     const done = { value: undefined, done: true as const }
     return {
       [Symbol.asyncIterator]: () => ({
         next: async () => {
+          // Asking for the next event means the one taken before it was handled: acknowledge that one only.
+          subscriber.handling?.()
+          subscriber.handling = undefined
           while (subscriber.queue.length === 0 && !subscriber.closed) {
             await new Promise<void>((resolve) => {
               subscriber.wake = resolve
             })
           }
           subscriber.wake = undefined
-          if (subscriber.queue.length > 0) return { value: subscriber.queue.shift(), done: false as const }
-          return done
+          const queued = subscriber.queue.shift()
+          if (queued === undefined) return done
+          subscriber.handling = queued.handled
+          return { value: queued.event, done: false as const }
         },
         return: async () => {
           subscriber.closed = true
           subscribers.delete(subscriber)
+          release(subscriber)
           return done
         },
       }),
@@ -473,14 +495,23 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
     fire: { tool: fire("tool"), shell: fire("shell"), permission: fire("permission"), session: fire("session") },
     hooks: (domain) => hooks[domain].map((entry) => entry.name),
     emit: (event) => {
+      const type = (event as { type?: unknown } | null)?.type
+      const handled: Array<Promise<void>> = []
       for (const subscriber of subscribers) {
-        subscriber.queue.push(event)
+        // A subscriber that asked for some types gets only those, as the host's stream does.
+        if (subscriber.types !== undefined && !(typeof type === "string" && subscriber.types.has(type))) continue
+        handled.push(new Promise<void>((resolve) => subscriber.queue.push({ event, handled: resolve })))
         subscriber.wake?.()
       }
+      return Promise.all(handled).then(() => {})
     },
     closeEvents: () => {
+      // Events already queued are still delivered, but no `emit` waits on a consumer that may never advance:
+      // closing acknowledges them (a promise resolves once, so the later acknowledgement is a no-op).
       for (const subscriber of subscribers) {
         subscriber.closed = true
+        subscriber.handling?.()
+        for (const queued of subscriber.queue) queued.handled()
         subscriber.wake?.()
       }
       subscribers.clear()

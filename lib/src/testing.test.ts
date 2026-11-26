@@ -193,6 +193,94 @@ describe("createFakeContext", () => {
     expect(fake.calls).toEqual([{ method: "event.subscribe", input: undefined }])
   })
 
+  /** A promise and the function that settles it, for a handler a test holds until it releases it. */
+  const barrier = () => {
+    let open: () => void = () => {}
+    const reached = new Promise<void>((done) => {
+      open = done
+    })
+    return { reached, open }
+  }
+
+  test("a subscription that names types receives only those, in emit order", async () => {
+    const fake = createFakeContext()
+    const seen: unknown[] = []
+    const reader = (async () => {
+      for await (const event of fake.context.event.subscribe({ types: ["wanted"] } as never)) seen.push(event)
+    })()
+    await fake.emit({ type: "unwanted" })
+    await fake.emit({ type: "wanted", n: 1 })
+    await fake.emit({ type: "other" })
+    await fake.emit({ type: "wanted", n: 2 })
+    fake.closeEvents()
+    await reader
+    expect(seen).toEqual([
+      { type: "wanted", n: 1 },
+      { type: "wanted", n: 2 },
+    ])
+  })
+
+  test("closeEvents acknowledges pending emits, though the consumer never advances, and queued events still drain", async () => {
+    const fake = createFakeContext()
+    const iterator = fake.context.event.subscribe()[Symbol.asyncIterator]()
+    const pending = fake.emit({ type: "a" })
+    fake.closeEvents()
+    await pending
+    const first = await iterator.next()
+    expect(first.done).toBe(false)
+    expect(first.value).toEqual({ type: "a" })
+    expect((await iterator.next()).done).toBe(true)
+  })
+
+  test("closeEvents acknowledges an event the consumer has taken and paused on, without another next()", async () => {
+    const fake = createFakeContext()
+    const iterator = fake.context.event.subscribe()[Symbol.asyncIterator]()
+    let resolved = false
+    const pending = fake.emit({ type: "a" }).then(() => {
+      resolved = true
+    })
+    // The consumer takes the event and is paused in its handler: it never asks for the next one.
+    const taken = await iterator.next()
+    expect(taken.done).toBe(false)
+    expect(resolved).toBe(false)
+    fake.closeEvents()
+    await pending
+    expect(resolved).toBe(true)
+  })
+
+  test("emit resolves when its own event is handled, though a later one is still being handled", async () => {
+    const fake = createFakeContext()
+    const seen: string[] = []
+    const enteredB = barrier()
+    const releaseB = barrier()
+    const reader = (async () => {
+      for await (const event of fake.context.event.subscribe()) {
+        const name = (event as { type: string }).type
+        seen.push(name)
+        if (name === "b") {
+          enteredB.open()
+          await releaseB.reached
+        }
+      }
+    })()
+    // Both are queued before the subscriber takes either.
+    const a = fake.emit({ type: "a" })
+    let bHandled = false
+    const b = fake.emit({ type: "b" }).then(() => {
+      bHandled = true
+    })
+    await enteredB.reached
+    // B's handler is still running: A is acknowledged, B is not.
+    await a
+    expect(seen).toEqual(["a", "b"])
+    expect(bHandled).toBe(false)
+    releaseB.open()
+    await b
+    expect(bHandled).toBe(true)
+    fake.closeEvents()
+    await reader
+  })
+
   test("skill transforms add skills and dispose them; existing skills stay", async () => {
     const fake = createFakeContext({ skills: [{ id: "host", content: "host" }] })
     const registration = await fake.context.skill.transform((editor) => {
