@@ -1,3 +1,9 @@
+## delivery [0.15.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.15.0...delivery--v0.15.1) (2026-11-26)
+
+### Bug Fixes
+
+* **delivery:** honour configured GitLab hosts in land and cleanup ([2e1c1a5](https://github.com/srobroek/harness-plugins/commit/2e1c1a51553d75377891c436544d85f5418af8fc))
+
 ## delivery [0.15.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.14.0...delivery--v0.15.0) (2026-11-26)
 
 ### Features
