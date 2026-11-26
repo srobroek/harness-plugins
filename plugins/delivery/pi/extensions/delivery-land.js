@@ -156,7 +156,7 @@ function verifyCheckout(checkout, commonDir) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.16.3",
+  version: "0.17.0",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",

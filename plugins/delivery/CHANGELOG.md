@@ -1,3 +1,9 @@
+## delivery [0.17.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.16.3...delivery--v0.17.0) (2026-11-26)
+
+### Features
+
+* **delivery:** let pi's delivery_land skip its confirmation by setting ([#226](https://github.com/srobroek/harness-plugins/issues/226)) ([0d63fca](https://github.com/srobroek/harness-plugins/commit/0d63fca321cb92d6e657a19387eca2d71548fdf3))
+
 ## delivery [0.16.3](https://github.com/srobroek/harness-plugins/compare/delivery--v0.16.2...delivery--v0.16.3) (2026-11-26)
 
 ### Bug Fixes
