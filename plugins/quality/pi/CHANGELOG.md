@@ -1,3 +1,9 @@
+## quality [0.20.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.19.0...quality--v0.20.0) (2026-11-26)
+
+### Features
+
+* challenger delegation, model families in the guard, one Pi adversarial-challenger ([#207](https://github.com/srobroek/harness-plugins/issues/207)) ([deb6d8e](https://github.com/srobroek/harness-plugins/commit/deb6d8e2a52dbe431ab4b256b8a53289bd418645))
+
 ## quality [0.19.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.18.0...quality--v0.19.0) (2026-11-25)
 
 ### Features
