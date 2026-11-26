@@ -48,6 +48,46 @@ list replaces it. Each entry matches the command word's basename.
 `op-guard` covers the two secret backends this plugin supports, the 1Password CLI and fnox.
 It does not check other secret managers.
 
+## Directory flags
+
+The `external-directory` check reads the directory flags that the host's `cd` check misses:
+
+- `git`: `-C`, `--git-dir`, `--work-tree`, and the `GIT_DIR` and `GIT_WORK_TREE` assignments
+- `make`, `cargo` and `go`: `-C`, and `cargo --manifest-path`
+- `npm --prefix`, `pnpm --dir`, `yarn --cwd` and `bun --cwd`
+- `uv`: `--directory` and `--project`
+
+A flag directory needs no approval when it lies in one of these:
+
+- the session directory or its repository root
+- the main checkout of that repository
+- a linked worktree of that repository whose `.git` file names the repository back
+- a linked worktree of any repository under a `worktreeRoots` folder
+
+A worktree under `worktreeRoots` counts only when the nearest `.git` above the directory, inside the folder,
+is a file that names `<common dir>/worktrees/<name>`. The check also requires the `gitdir` file in that folder
+to name the `.git` file back. A plain directory, a main checkout or a submodule under the folder still asks.
+
+`worktreeRoots` defaults to `["~/tmp/worktrees"]`. A list replaces the default, and `~` expands to the home
+folder. Set it in the plugin options on OpenCode, and in the `safety` key of the user settings on pi
+([Options on pi](#options-on-pi)).
+
+The check reads the worktrees from disk and runs no git. It compares real paths. So `/home/u/x` matches
+`/local/home/u/x` when one links to the other, and a symlink that leads out of a worktree counts as outside.
+Any other flag directory asks. On OpenCode that is an `external_directory` ask, as for a `cd`.
+
+A relative flag value resolves against the directory that a leading `cd` moves to. After `cd <dir> &&` that
+is `<dir>`. After `cd <dir>;` the rest runs in `<dir>` when the `cd` succeeds, and in the session directory
+when it fails. So each relative value must pass from both bases.
+
+The check cannot follow some leading `cd` forms. After one of them, a relative value stays unresolved:
+
+- a quoted directory, or one with `~`, `$`, `..` or a leading `-`
+- a redirection or `||` after the `cd`
+- `pushd`
+
+pi asks about an unresolved value, and OpenCode refuses the call.
+
 ## Subagent prompts and skill references
 
 A permission prompt in a subagent session (any session with a parent) can wait for an answer that
@@ -174,7 +214,7 @@ extension's asks.
 | History rewrites in place | None | Blocks (`history-rewrite`) |
 | Direct `op` calls and value-carrying `fnox` commands | None | Blocks (`op-guard`) |
 | A write to a shipped migration through `edit`, `write` or a shell redirect | None | Blocks (`migration-edit`) |
-| A directory flag outside the session (`git -C`, `--prefix`, …) | None | Asks (`external-directory`) |
+| A directory flag outside the session's repository and its worktrees (`git -C`, `--prefix`, …) | None | Asks (`external-directory`) |
 | A close-keyword list in `gh pr create\|edit --body` | None | Rewrites it in `event.input.command` (`close-keywords`) |
 | A package add or install | None | Appends the vetting advisory to the result (`package-investigate`) |
 | Secret environment values in any tool result | None | Redacts them in `tool_result` |
@@ -236,12 +276,16 @@ the OpenCode keys that apply on pi:
     "disable": ["package-investigate"],
     "opAllow": ["vault list"],
     "gitWrappers": ["git"],
+    "worktreeRoots": ["~/tmp/worktrees"],
     "redactSecrets": true,
     "redactNames": [],
     "redactExclude": []
   }
 }
 ```
+
+`worktreeRoots` names the folders whose linked worktrees, of any repository, the directory-flag check
+takes as inside ([Directory flags](#directory-flags)).
 
 `disable` takes these ids:
 

@@ -24,12 +24,12 @@ import {
   type ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent"
 import { leadingCd } from "@srobroek/opencode-lib"
-import { type ExternalDirectory, externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
+import type { ExternalDirectory } from "@srobroek/opencode-lib/external-directories"
 import { type ProviderTypes, readProviderTypes } from "@srobroek/opencode-lib/fnox-config"
 import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
 import { loadPiPluginSettings, PI_SETTINGS_FILE } from "@srobroek/opencode-lib/pi-settings"
 import { rewriteCloseKeywords } from "../shared/close-keywords.ts"
-import { flagDirectoryReport } from "../shared/flag-directories.ts"
+import { callFlagDirectoryReport, externalFlagDirectories, readWorktreeRoots } from "../shared/flag-directories.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../shared/guards.ts"
 import { decideToolCall, type MigrationOptions, migrationOverride } from "../shared/migrations.ts"
 import { createPackageAdvisor } from "../shared/package-investigate.ts"
@@ -65,9 +65,11 @@ export type PiOptions = {
   redact: RedactOptions
   /** Command names the gates read as git; only `git` by default. */
   gitWrappers: readonly string[]
+  /** Folders whose linked worktrees, of any repository, the directory-flag check takes as inside; `~` expanded. */
+  worktreeRoots: readonly string[]
 }
 
-/** `{ disable, opAllow, gitWrappers, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
+/** `{ disable, opAllow, gitWrappers, worktreeRoots, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
 export function readPiOptions(raw: unknown): PiOptions {
   const options = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
   const disable: unknown[] = Array.isArray(options.disable) ? options.disable : []
@@ -77,6 +79,7 @@ export function readPiOptions(raw: unknown): PiOptions {
     opAllow: allow.filter((entry): entry is string => typeof entry === "string"),
     redact: readRedactOptions(options),
     gitWrappers: readGitWrappers(options),
+    worktreeRoots: readWorktreeRoots(options.worktreeRoots),
   }
 }
 
@@ -139,7 +142,8 @@ function migrationsOn(config: GateConfig): boolean {
  * The verdict on a `bash` command that runs in `cwd`, after any close-keyword rewrite. A leading `cd`
  * to a literal directory moves the gates there. One whose directory cannot be read leaves them in
  * `cwd`: the checks that follow `cd` themselves see it (history rewrites, write targets, the op-guard,
- * branch deletes, worktree removals), and the flag-directory check treats its base as unknown.
+ * branch deletes, worktree removals). The flag-directory check reads the leading `cd` its own way
+ * (`callFlagDirectoryReport`), and takes the session repository's worktrees as inside.
  */
 export async function gateBash(command: string, cwd: string, config: GateConfig): Promise<Verdict> {
   const { disabled } = config.options
@@ -185,8 +189,9 @@ export async function gateBash(command: string, cwd: string, config: GateConfig)
     asks.push(REVIEW_FAILED)
   }
   if (!disabled.has("external-directory")) {
-    const flags = attempt(() => flagDirectoryReport(command, lead.kind === "rejected" ? undefined : gateCwd, config.options.gitWrappers))
-    const external = flags === undefined ? [] : (attempt(() => externalDirectories(flags.dirs, sessionRoots(cwd))) ?? [])
+    const flags = attempt(() => callFlagDirectoryReport(command, cwd, config.options.gitWrappers))
+    const external =
+      flags === undefined ? [] : (attempt(() => externalFlagDirectories(flags.dirs, cwd, config.options.worktreeRoots)) ?? [])
     if (external.length > 0) asks.push(externalMessage(external))
     if (flags !== undefined && flags.unresolved.length > 0) asks.push(unresolvedMessage(flags.unresolved))
   }

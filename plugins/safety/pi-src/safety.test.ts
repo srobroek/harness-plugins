@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, mock, setDefaultTimeout, test } from "bun:test"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { piAgentDir, withPiAgentDir } from "@srobroek/opencode-lib/testing"
@@ -92,6 +92,11 @@ describe("readPiOptions and loadPiOptions", () => {
   test("gitWrappers defaults to git and keeps a configured list", () => {
     expect(readPiOptions({}).gitWrappers).toEqual(["git"])
     expect(readPiOptions({ gitWrappers: ["git", "dgit"] }).gitWrappers).toEqual(["git", "dgit"])
+  })
+
+  test("worktreeRoots defaults to ~/tmp/worktrees and keeps a configured list, `~` expanded", () => {
+    expect(readPiOptions({}).worktreeRoots).toEqual([join(homedir(), "tmp", "worktrees")])
+    expect(readPiOptions({ worktreeRoots: ["~/lanes", "/abs", 3] }).worktreeRoots).toEqual([join(homedir(), "lanes"), "/abs"])
   })
 
   test("a missing file or key is the defaults without a warning", () => {
@@ -220,6 +225,75 @@ describe("gateBash evidence-based asks", () => {
     expect(deleted.kind).not.toBe("run")
     const rewrite = await gateBash('cd "$X" && git filter-branch --env-filter true', repo, config())
     expect(rewrite.kind).toBe("block")
+  })
+})
+
+describe("gateBash directory flags in the session repository's worktrees", () => {
+  // The reported layout: a main checkout, its linked worktrees in another folder, and a second spelling of the
+  // folder that holds both (`/home/u` linking to `/local/home/u`).
+  const main = join(root, "fc", "main")
+  const sink = join(root, "worktrees", "sink")
+  const lane = join(root, "worktrees", "lane")
+  const alias = join(root, "home-alias")
+  const outside = join(root, "outside-target")
+  mkdirSync(main, { recursive: true })
+  git(main, "init", "-q", "-b", "main")
+  git(main, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
+  git(main, "worktree", "add", "-q", "-b", "sink", sink)
+  git(main, "worktree", "add", "-q", "-b", "lane", lane)
+  mkdirSync(join(sink, "infra"))
+  mkdirSync(outside)
+  symlinkSync(root, alias)
+  // In `lane`, `infra` leads out of every root.
+  symlinkSync(outside, join(lane, "infra"))
+  const reported = (dir: string) =>
+    `cd ${dir}; timeout 300 bun install --cwd infra --frozen-lockfile 2>&1 | tail -2; cd infra && timeout 600 bun run test -- test/build-commit.test.ts 2>&1 | tail -25`
+
+  test("the reported command, from the main checkout into a linked worktree, runs", async () => {
+    expect(await gateBash(reported(sink), main, config())).toEqual({ kind: "run" })
+  })
+
+  test("from a linked worktree into the main checkout, and through another spelling of the folder, it runs", async () => {
+    expect(await gateBash(reported(main), sink, config())).toEqual({ kind: "run" })
+    const spelled = join(alias, "worktrees", "sink")
+    expect(await gateBash(reported(spelled), main, config())).toEqual({ kind: "run" })
+    expect(await gateBash(`cd ${spelled} && bun install --cwd infra`, main, config())).toEqual({ kind: "run" })
+  })
+
+  test("after `cd <dir>;` the session directory is a base too, so a flag directory a failed cd leaves outside asks", async () => {
+    expect(await gateBash(`cd ${sink}; bun install --cwd infra`, lane, config())).toEqual({
+      kind: "ask",
+      message: externalMessage([{ resource: `${lane}/infra/*`, save: `${lane}/*` }]),
+    })
+    expect(await gateBash(`cd ${sink} && bun install --cwd infra`, lane, config())).toEqual({ kind: "run" })
+  })
+
+  test("a cd outside the repository and its worktrees still asks; an unreadable one stays unresolved", async () => {
+    expect(await gateBash(`cd ${repo}; bun install --cwd x`, main, config())).toEqual({
+      kind: "ask",
+      message: externalMessage([{ resource: `${repo}/x/*`, save: `${repo}/*` }]),
+    })
+    expect(await gateBash('cd "$X"; bun install --cwd x', main, config())).toEqual({ kind: "ask", message: unresolvedMessage(["x"]) })
+  })
+
+  test("worktreeRoots takes a linked worktree of another repository under a root as inside", async () => {
+    const other = join(root, "other-repo")
+    const rooted = join(root, "rooted")
+    mkdirSync(other)
+    git(other, "init", "-q", "-b", "main")
+    git(other, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
+    git(other, "worktree", "add", "-q", "-b", "lane", join(rooted, "lane"))
+    mkdirSync(join(rooted, "plain"))
+    const into = (dir: string) => `cd ${dir}; bun install --cwd infra`
+    expect(await gateBash(into(join(rooted, "lane")), main, config({ worktreeRoots: [rooted] }))).toEqual({ kind: "run" })
+    expect(await gateBash(into(join(rooted, "lane")), main, config())).toEqual({
+      kind: "ask",
+      message: externalMessage([{ resource: `${rooted}/lane/infra/*`, save: `${rooted}/lane/*` }]),
+    })
+    expect(await gateBash(into(join(rooted, "plain")), main, config({ worktreeRoots: [rooted] }))).toEqual({
+      kind: "ask",
+      message: externalMessage([{ resource: `${rooted}/plain/infra/*`, save: `${rooted}/plain/infra/*` }]),
+    })
   })
 })
 
