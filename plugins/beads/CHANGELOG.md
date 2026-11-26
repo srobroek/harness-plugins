@@ -1,3 +1,9 @@
+## beads [1.3.1](https://github.com/srobroek/harness-plugins/compare/beads--v1.3.0...beads--v1.3.1) (2026-11-26)
+
+### Bug Fixes
+
+* **beads:** judge a PR for another repository by its own ledger ([1ac2595](https://github.com/srobroek/harness-plugins/commit/1ac259567fa4a1be48dd2de78a4af9d500138d40))
+
 ## beads [1.3.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.2.0...beads--v1.3.0) (2026-11-26)
 
 ### Features
