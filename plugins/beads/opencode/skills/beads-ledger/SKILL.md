@@ -46,6 +46,8 @@ measured session issued 37 separate `bd create` calls and 27 separate
 
 # AD HOC WORK AND HANDOFF
 
+On Pi, when dispatching a single foreground worker assigned to a bead, set `async: false` and put `Bead: FULL_ID` on the first line of its `task`. Use the actual ID. With the Beads enforcer loaded, the coordinator receives an error instead of a successful result if the worker does not leave a matching progress checkpoint. Do not rerun a worker just because its checkpoint is missing; check for work already done. For async workers and other hosts, check the handoff yourself with `beads-evidence`.
+
 When creating or refining a work bead, name its delivery requirement in the description, separate from the acceptance criteria: PR merge, an accepted result without a PR, deployment, or sign-off. If several steps are required, list them all. The coordinator uses this requirement to decide when to close; see `beads-evidence`.
 
 In an active ledger, find the governing bead before starting a change or dispatching work. Check its acceptance criteria, owner, and unresolved prerequisites. A standalone investigation can stay outside the ledger while it only answers a question. When an investigation serves an active bead, record its finding on that bead. Create a linked issue when a finding becomes a separate fix, decision, blocker or deliverable. Search first to avoid duplicates.

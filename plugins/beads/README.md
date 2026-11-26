@@ -426,6 +426,14 @@ discovery and through this list. In that case the second copy skips any call tha
 copy already gated. See the `extensions` and `subagentOnlyExtensions` fields in the
 [pi-subagents agent docs](https://github.com/nicobailon/pi-subagents/blob/main/docs/agents.md).
 
+#### Verify a tracked foreground handoff
+
+For work assigned to a bead, call one native Pi `subagent` with `async: false`. Start its `task` with `Bead: FULL_ID` on a line by itself. Put the work instructions on the next line. Use the same ledger for the coordinator and worker. Leave the marker off standalone investigations. An issue mentioned elsewhere in a brief does not start tracking.
+
+The parent enforcer selects the ledger at dispatch and adds a fresh event ID and checkpoint instructions to the brief. Before returning, the worker records its result, evidence and next action on the assigned bead under its own actor. The parent checks the direct child's session identity and runs the packaged `beads-evidence/work_check.py progress` with `python3`. Missing proof produces a tool error. Inspect the session and ledger before retrying: the worker's changes may already exist. A verified progress record does not prove acceptance or authorize closure.
+
+The check covers the marked single-worker tool call and its result. It does not intercept background completion notices, workflow lanes, intercom messages, other hosts, or unmarked calls. Tracked single-worker calls must request foreground execution. Worker errors remain errors.
+
 These parts stay OpenCode-only:
 
 - claim tracking and lease heartbeats

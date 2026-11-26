@@ -5900,6 +5900,62 @@ function systemDeps(env, cwd, signal) {
   };
 }
 
+// plugins/beads/pi-src/handoff.ts
+import { execFile } from "child_process";
+import { randomUUID as randomUUID2 } from "crypto";
+import { promisify } from "util";
+var execute = promisify(execFile);
+function verifyWithHelper(script) {
+  return async (a, actor, env) => {
+    const { stdout } = await execute("python3", ["-I", script, "progress", a.bead, "--actor", actor, "--event", a.event, "--since", a.since], {
+      cwd: a.cwd,
+      env: { ...env, BEADS_DIR: a.store },
+      timeout: 35000,
+      maxBuffer: 16384
+    });
+    const result = JSON.parse(stdout);
+    return result?.ok === true && result.bead === a.bead && result.kind === "progress" && result.event === a.event;
+  };
+}
+function bindHandoff(input, context) {
+  if (typeof input.task !== "string")
+    return;
+  const first = input.task.split(`
+`, 1)[0]?.trim() ?? "";
+  if (!first.startsWith("Bead:"))
+    return;
+  const bead = /^Bead: ([a-zA-Z0-9][\w.-]{0,199})$/.exec(first)?.[1];
+  if (!bead)
+    return "Use Bead: FULL_ID on the first line of the worker task.";
+  if (input.async !== false || typeof input.agent !== "string" || input.workflow !== undefined || input.action !== undefined) {
+    return "A Bead: assignment requires a single foreground subagent (async: false).";
+  }
+  const { cwd, store, parent, actor, now } = context();
+  if (!store || !parent)
+    return "A tracked handoff needs an active coordinator ledger and a persisted parent session.";
+  const event = randomUUID2();
+  input.task += `
+
+Before returning, post a progress checkpoint on ${bead} using this child's Beads actor and event ${event}. Start the comment with beads-work/v1 followed by a space and a JSON object. Set kind to "progress" and event to "${event}". Supply three nonblank strings: result (what happened), evidence (a checkable reference), and next (the next action or owner). Do not close the bead.`;
+  return { bead, event, cwd, store, parent, actor, since: new Date(Math.floor(now / 1000) * 1000).toISOString() };
+}
+async function handoffVerified(a, details, readHeader, verify, env) {
+  try {
+    const results = details?.results;
+    if (!Array.isArray(results) || results.length !== 1)
+      return false;
+    const child = results[0];
+    if (child?.exitCode !== 0 || child.detached || child.interrupted || child.timedOut || child.stopped || child.error || typeof child.sessionFile !== "string")
+      return false;
+    const header = readHeader(child.sessionFile);
+    if (!header || header.parentSession !== a.parent || !/^[a-zA-Z0-9][\w.-]{0,127}$/.test(header.id))
+      return false;
+    return await verify(a, `${a.actor}/${header.id}`, env);
+  } catch {
+    return false;
+  }
+}
+
 // plugins/beads/pi-src/beads.ts
 var PIN_CACHE_MS = 5000;
 var EXTENSION_DIR = dirname8(fileURLToPath(import.meta.url));
@@ -5955,6 +6011,8 @@ function setupBeadsPi(pi, deps = {}) {
   const identities = new Map;
   const pending = new Map;
   const held = new Map;
+  const handoffs = new Map;
+  const verify = deps.verifyProgress ?? verifyWithHelper(join7(EXTENSION_DIR, "../skills/beads-evidence/work_check.py"));
   const cachedPinFor = (cwd) => {
     const hit = pins.get(cwd);
     if (hit !== undefined && now() - hit.at < PIN_CACHE_MS)
@@ -6046,6 +6104,23 @@ function setupBeadsPi(pi, deps = {}) {
       admitter.verify(ctx.cwd, env);
   });
   pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "subagent") {
+      const key = `${ctx.sessionManager.getSessionId()}\x00${event.toolCallId}`;
+      if (!claimCall(calls, key))
+        return;
+      const binding = bindHandoff(event.input, () => ({
+        cwd: ctx.cwd,
+        store: bdStoreDir(ctx.cwd, pinnedEnvironment(ctx.cwd, baseEnv(), cachedPinFor)),
+        parent: ctx.sessionManager.getSessionFile(),
+        actor: identityOf(ctx).actor,
+        now: now()
+      }));
+      if (typeof binding === "string")
+        return { block: true, reason: binding };
+      if (binding)
+        handoffs.set(key, binding);
+      return;
+    }
     const isBash = event.toolName === "bash";
     const isWrite = event.toolName === "edit" || event.toolName === "write";
     if (!isBash && !isWrite)
@@ -6055,7 +6130,27 @@ function setupBeadsPi(pi, deps = {}) {
     const input = event.input;
     return keptAlive(() => isBash ? gateBash(input, event.toolCallId, ctx) : gateWrite(input, ctx));
   });
-  pi.on("tool_result", (event) => {
+  pi.on("tool_execution_end", (event, ctx) => {
+    if (event.toolName === "subagent")
+      handoffs.delete(`${ctx.sessionManager.getSessionId()}\x00${event.toolCallId}`);
+  });
+  pi.on("tool_result", async (event, ctx) => {
+    if (event.toolName === "subagent") {
+      const key = `${ctx.sessionManager.getSessionId()}\x00${event.toolCallId}`;
+      const binding = handoffs.get(key);
+      if (!binding)
+        return;
+      handoffs.delete(key);
+      if (event.isError)
+        return;
+      if (await handoffVerified(binding, event.details, readHeader, verify, baseEnv()))
+        return;
+      const failure = { handoff: "unverified", bead: binding.bead, event: binding.event };
+      return { isError: true, details: failure, structuredContent: failure, content: [{
+        type: "text",
+        text: `Handoff unverified for ${binding.bead} (event ${binding.event}). Do not mark it complete. Inspect the worker session and bead comments; recover the checkpoint before retrying.`
+      }] };
+    }
     if (event.toolName !== "bash")
       return;
     const call = pending.get(event.toolCallId);
