@@ -5611,7 +5611,7 @@ function landOutput(outcome, cleanup) {
 
 // plugins/delivery/opencode/src/pending-cleanup.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync8, readdirSync as readdirSync5 } from "fs";
-import { hostname as hostname3 } from "os";
+import { hostname as hostname2 } from "os";
 import { join as join10, resolve as resolve7 } from "path";
 
 // lib/src/event-watch.ts
@@ -5942,7 +5942,6 @@ async function holdLease(lockPath, options) {
 // lib/src/running-reports.ts
 import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
 import { mkdirSync as mkdirSync6, readdirSync as readdirSync4, renameSync as renameSync3, rmSync as rmSync5, statSync as statSync3, writeFileSync as writeFileSync6 } from "fs";
-import { hostname as hostname2 } from "os";
 import { join as join8, sep as sep3 } from "path";
 
 // lib/src/worktree-locks.ts
@@ -6226,7 +6225,9 @@ function lockedWrite(commonDir, directory, options, write) {
 // lib/src/running-reports.ts
 var MAX_REPORT_BYTES = 1024 * 1024;
 var runningDirectory = (receiptsRoot) => join8(receiptsRoot, ".running");
-var reportFile = (receiptsRoot, sessionID) => join8(runningDirectory(receiptsRoot), `${createHash4("sha1").update(sessionID).digest("hex")}.json`);
+var sessionKey = (sessionID) => createHash4("sha1").update(sessionID).digest("hex");
+var reportFile = (receiptsRoot, sessionID, instance) => join8(runningDirectory(receiptsRoot), `${sessionKey(sessionID)}.${createHash4("sha1").update(instance).digest("hex").slice(0, 16)}.json`);
+var legacyReportFile = (receiptsRoot, sessionID) => join8(runningDirectory(receiptsRoot), `${sessionKey(sessionID)}.json`);
 var isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var optionalString = (value) => typeof value === "string" ? value : undefined;
 function parseReport(text) {
@@ -6242,14 +6243,9 @@ function parseReport(text) {
     return;
   if (typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid < 1)
     return;
-  if (typeof raw.host !== "string" || raw.host === "")
+  if (typeof raw.host !== "string" || raw.host === "" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
     return;
-  if ("cleared" in raw) {
-    if (raw.cleared !== true || "jobs" in raw || "instance" in raw)
-      return;
-    return { sessionID: raw.sessionID, cleared: true, at: raw.at, pid: raw.pid, host: raw.host };
-  }
-  if (typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
+  if (raw.gen !== undefined && (typeof raw.gen !== "number" || !Number.isInteger(raw.gen) || raw.gen < 0))
     return;
   const jobs = [];
   for (const job of raw.jobs) {
@@ -6268,9 +6264,8 @@ function parseReport(text) {
       ...cwd === undefined ? {} : { cwd }
     });
   }
-  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance };
+  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance, gen: raw.gen ?? 0 };
 }
-var isTombstone = (value) => ("cleared" in value);
 function readStored(path) {
   const read = readBoundedBytes(path, MAX_REPORT_BYTES);
   if (read.kind === "absent")
@@ -6281,67 +6276,40 @@ function readStored(path) {
   if (parsed === undefined)
     return { kind: "unreadable" };
   try {
-    const mtimeMs = statSync3(path).mtimeMs;
-    return isTombstone(parsed) ? { kind: "tombstone", tombstone: parsed, mtimeMs } : { kind: "report", report: { ...parsed, mtimeMs } };
+    return { kind: "report", report: { ...parsed, mtimeMs: statSync3(path).mtimeMs } };
   } catch {
     return { kind: "unreadable" };
   }
 }
-function versionOnDisk(file, sessionID) {
-  const stored = readStored(file);
-  if (stored.kind === "report" && stored.report.sessionID === sessionID)
-    return stored.report.at;
-  if (stored.kind === "tombstone" && stored.tombstone.sessionID === sessionID)
-    return stored.tombstone.at;
-  return;
-}
-function replaceFile(file, root, text, what) {
+function writeReport(receiptsRoot, report) {
+  const full = { ...report, gen: report.gen ?? 0 };
+  const text = JSON.stringify(full);
   if (Buffer.byteLength(text) > MAX_REPORT_BYTES)
-    throw new Error(`${what} is larger than ${MAX_REPORT_BYTES} bytes`);
-  mkdirSync6(runningDirectory(root), { recursive: true });
+    throw new Error(`the report of ${report.sessionID} is larger than ${MAX_REPORT_BYTES} bytes`);
+  mkdirSync6(runningDirectory(receiptsRoot), { recursive: true });
+  const file = reportFile(receiptsRoot, report.sessionID, report.instance);
   const temp = `${file}.${randomUUID3()}.tmp`;
   writeFileSync6(temp, text);
   renameSync3(temp, file);
 }
-function writeReport(receiptsRoot, report) {
-  const file = reportFile(receiptsRoot, report.sessionID);
-  const onDisk = versionOnDisk(file, report.sessionID);
-  if (onDisk !== undefined && onDisk >= report.at)
-    return "superseded";
-  replaceFile(file, receiptsRoot, JSON.stringify(report), `the report of ${report.sessionID}`);
-  return "written";
+function clearReport(receiptsRoot, sessionID, instance) {
+  rmSync5(reportFile(receiptsRoot, sessionID, instance), { force: true });
 }
-function clearReport(receiptsRoot, sessionID, at) {
-  const file = reportFile(receiptsRoot, sessionID);
-  const onDisk = versionOnDisk(file, sessionID);
-  if (onDisk !== undefined && onDisk > at)
-    return "superseded";
-  const tombstone = { sessionID, cleared: true, at, pid: process.pid, host: hostname2() };
-  replaceFile(file, receiptsRoot, JSON.stringify(tombstone), `the tombstone of ${sessionID}`);
-  return "cleared";
+function removeReport(receiptsRoot, sessionID, instance, maxGen = Number.POSITIVE_INFINITY) {
+  const file = reportFile(receiptsRoot, sessionID, instance);
+  const stored = readStored(file);
+  if (stored.kind === "report" && stored.report.gen > maxGen)
+    return "kept";
+  rmSync5(file, { force: true });
+  return "removed";
 }
-function removeReport(receiptsRoot, sessionID) {
-  rmSync5(reportFile(receiptsRoot, sessionID), { force: true });
-}
-function collectTombstones(receiptsRoot, nowMs, expiryMs = HOLD_EXPIRY_MS) {
-  const directory = runningDirectory(receiptsRoot);
-  let names;
-  try {
-    names = readdirSync4(directory).filter((name) => name.endsWith(".json"));
-  } catch {
-    return 0;
-  }
-  let removed = 0;
-  for (const name of names) {
-    const stored = readStored(join8(directory, name));
-    if (stored.kind !== "tombstone" || nowMs - stored.mtimeMs < expiryMs)
-      continue;
-    try {
-      rmSync5(join8(directory, name), { force: true });
-      removed++;
-    } catch {}
-  }
-  return removed;
+function removeLegacyReport(receiptsRoot, sessionID, instance, pid) {
+  const file = legacyReportFile(receiptsRoot, sessionID);
+  const stored = readStored(file);
+  if (stored.kind !== "report" || stored.report.instance !== instance || stored.report.pid !== pid)
+    return false;
+  rmSync5(file, { force: true });
+  return true;
 }
 function readReports(receiptsRoot) {
   const directory = runningDirectory(receiptsRoot);
@@ -6374,7 +6342,7 @@ function reportsWritable(receiptsRoot) {
     return false;
   }
 }
-var reportVersion = (report) => `${report.at}:${report.instance}:${JSON.stringify(report.jobs)}`;
+var reportVersion = (report) => `${report.sessionID}:${report.at}:${report.instance}:${report.gen}:${JSON.stringify(report.jobs)}`;
 function reportLive(report, clock) {
   if (report.instance === clock.instance)
     return true;
@@ -6837,7 +6805,7 @@ async function authorizeExplicit(pending, ask, sessionID, request) {
   if (deferred !== undefined)
     throw new CleanupDeferred(deferred);
 }
-var SERVER_INSTANCE = `${hostname3()}:${process.pid}:${Date.now().toString(36)}`;
+var SERVER_INSTANCE = `${hostname2()}:${process.pid}:${Date.now().toString(36)}`;
 var SESSION_LOOKUP_MS = 5000;
 var IDLE_PASS_MS = 60000;
 var DISPOSE_WAIT_MS = 1e4;
@@ -6849,7 +6817,9 @@ function createPendingCleanup(deps) {
   const observationMs = deps.cleanup?.bounds?.refReadMs ?? CLEANUP_BOUNDS.refReadMs;
   const sessionLookupMs = deps.sessionLookupMs ?? SESSION_LOOKUP_MS;
   const unsettled = new Map;
-  const pendingDeletes = new Set;
+  const pendingDeletes = new Map;
+  const lastGen = new Map;
+  const legacyChecked = new Set;
   const retrying = new Set;
   const retryOn = (trigger) => (deps.retryAt ?? ["pass", "check", "idle"]).includes(trigger);
   let generation = 0;
@@ -7529,7 +7499,7 @@ function createPendingCleanup(deps) {
   };
   const boundedBy = async (work, ms) => {
     let timer;
-    const bound = new Promise((done) => {
+    const bound = deps.bound?.(ms) ?? new Promise((done) => {
       timer = setTimeout(done, ms);
     });
     try {
@@ -7580,7 +7550,7 @@ function createPendingCleanup(deps) {
     const first = unsettled.entries().next().value;
     return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`;
   };
-  const reportClock = () => ({ now: (deps.fileNow ?? Date.now)(), host: hostname3(), instance: SERVER_INSTANCE, alive: processAlive });
+  const reportClock = () => ({ now: (deps.fileNow ?? Date.now)(), host: hostname2(), instance: SERVER_INSTANCE, alive: processAlive });
   const runningBlock = async (worktree, hold, spellings = []) => {
     const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out";
     const root = receiptDirectory(env);
@@ -7595,7 +7565,8 @@ function createPendingCleanup(deps) {
     const first = readReports(root);
     if (first.unreadable)
       return unreadable;
-    const seen = new Map(first.reports.map((report) => [report.sessionID, reportVersion(report)]));
+    const seenKey = (report) => `${report.sessionID}\x00${report.instance}`;
+    const seen = new Map(first.reports.map((report) => [seenKey(report), reportVersion(report)]));
     const cache = new Map;
     const lookUp = async (ids) => {
       await Promise.all(ids.map(async (id) => void cache.set(id, await sessionState(id))));
@@ -7619,7 +7590,7 @@ function createPendingCleanup(deps) {
       if (leased) {
         const peek = readReports(root);
         if (!peek.unreadable)
-          await lookUp(neededLookups(peek.reports.filter((report) => seen.get(report.sessionID) !== reportVersion(report)), forms, reportClock()));
+          await lookUp(neededLookups(peek.reports.filter((report) => seen.get(seenKey(report)) !== reportVersion(report)), forms, reportClock()));
       }
       const again = stuck();
       if (again !== undefined)
@@ -7640,7 +7611,7 @@ function createPendingCleanup(deps) {
   };
   const beginReport = (sessionID, background) => {
     const gen = ++generation;
-    pendingDeletes.delete(sessionID);
+    lastGen.set(sessionID, gen);
     unsettled.set(sessionID, { gen, at: stamp(), reason: "its report is still waiting to be written", failed: false, background });
     return gen;
   };
@@ -7662,11 +7633,14 @@ function createPendingCleanup(deps) {
       await underStore(() => {
         if (unsettled.get(sessionID)?.gen !== gen)
           return;
-        collectTombstones(root, (deps.fileNow ?? Date.now)());
+        if (!legacyChecked.has(sessionID)) {
+          legacyChecked.add(sessionID);
+          removeLegacyReport(root, sessionID, SERVER_INSTANCE, process.pid);
+        }
         if (background.length === 0)
-          clearReport(root, sessionID, at);
+          clearReport(root, sessionID, SERVER_INSTANCE);
         else
-          writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname3(), instance: SERVER_INSTANCE });
+          writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: SERVER_INSTANCE, gen });
       });
       if (unsettled.get(sessionID)?.gen === gen)
         unsettled.delete(sessionID);
@@ -7684,10 +7658,12 @@ function createPendingCleanup(deps) {
     const due = [...unsettled].filter(([id, entry]) => entry.failed && id !== except && !retrying.has(id));
     if (due.length === 0 && pendingDeletes.size === 0 || !reportsWritable(receiptDirectory(env)))
       return;
-    const deletes = [...pendingDeletes].map(async (id) => {
+    const deletes = [...pendingDeletes].map(async ([id, token]) => {
       try {
-        await underStore(() => removeReport(receiptDirectory(env), id));
+        await underStore(() => removeDeleted(id, token));
         pendingDeletes.delete(id);
+        if (lastGen.get(id) === token)
+          lastGen.delete(id);
       } catch (error) {
         console.error(`delivery: could not remove the report of deleted session ${id}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -7706,12 +7682,23 @@ function createPendingCleanup(deps) {
       })
     ]);
   };
+  const removeDeleted = (sessionID, token) => {
+    if ((lastGen.get(sessionID) ?? 0) > token)
+      return;
+    removeReport(receiptDirectory(env), sessionID, SERVER_INSTANCE, token);
+    removeLegacyReport(receiptDirectory(env), sessionID, SERVER_INSTANCE, process.pid);
+    legacyChecked.delete(sessionID);
+  };
   const forgetSession = async (sessionID) => {
     unsettled.delete(sessionID);
-    pendingDeletes.add(sessionID);
+    const token = lastGen.get(sessionID) ?? 0;
+    pendingDeletes.set(sessionID, token);
     try {
-      await underStore(() => removeReport(receiptDirectory(env), sessionID));
-      pendingDeletes.delete(sessionID);
+      await underStore(() => removeDeleted(sessionID, token));
+      if (pendingDeletes.get(sessionID) === token)
+        pendingDeletes.delete(sessionID);
+      if (lastGen.get(sessionID) === token)
+        lastGen.delete(sessionID);
     } catch (error) {
       console.error(`delivery: could not remove the report of deleted session ${sessionID}: ${error instanceof Error ? error.message : String(error)}`);
     }

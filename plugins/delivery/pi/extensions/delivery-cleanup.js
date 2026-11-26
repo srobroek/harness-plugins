@@ -636,14 +636,9 @@ function parseReport(text) {
     return;
   if (typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid < 1)
     return;
-  if (typeof raw.host !== "string" || raw.host === "")
+  if (typeof raw.host !== "string" || raw.host === "" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
     return;
-  if ("cleared" in raw) {
-    if (raw.cleared !== true || "jobs" in raw || "instance" in raw)
-      return;
-    return { sessionID: raw.sessionID, cleared: true, at: raw.at, pid: raw.pid, host: raw.host };
-  }
-  if (typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
+  if (raw.gen !== undefined && (typeof raw.gen !== "number" || !Number.isInteger(raw.gen) || raw.gen < 0))
     return;
   const jobs = [];
   for (const job of raw.jobs) {
@@ -662,9 +657,8 @@ function parseReport(text) {
       ...cwd === undefined ? {} : { cwd }
     });
   }
-  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance };
+  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance, gen: raw.gen ?? 0 };
 }
-var isTombstone = (value) => ("cleared" in value);
 function readStored(path) {
   const read = readBoundedBytes(path, MAX_REPORT_BYTES);
   if (read.kind === "absent")
@@ -675,8 +669,7 @@ function readStored(path) {
   if (parsed === undefined)
     return { kind: "unreadable" };
   try {
-    const mtimeMs = statSync3(path).mtimeMs;
-    return isTombstone(parsed) ? { kind: "tombstone", tombstone: parsed, mtimeMs } : { kind: "report", report: { ...parsed, mtimeMs } };
+    return { kind: "report", report: { ...parsed, mtimeMs: statSync3(path).mtimeMs } };
   } catch {
     return { kind: "unreadable" };
   }
