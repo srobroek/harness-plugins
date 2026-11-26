@@ -15,7 +15,7 @@
 import { mkdirSync } from "node:fs"
 import { hostname } from "node:os"
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent"
-import { withLease } from "@srobroek/opencode-lib/lease-lock"
+import { type HeldLease, holdLease } from "@srobroek/opencode-lib/lease-lock"
 import { blockWithoutSessionLookup, runningLeaseFile } from "@srobroek/opencode-lib/running-reports"
 import { processAlive } from "@srobroek/opencode-lib/subprocess"
 import { canonicalDirectory, ownershipOf, readClaim } from "@srobroek/opencode-lib/worktree-claims"
@@ -91,6 +91,14 @@ export function sessionCoordination(cwd: string, deps: Pick<PiCleanupDeps, "lock
   // The other verified spellings of the worktree (the receipt's own), handed over by the final check.
   let spellings: readonly string[] = []
   const receiptsRoot = () => receiptDirectory(deps.cleanup?.env ?? process.env)
+  // The store's lease, taken at the final check (after the proofs, inside the worktree's lock) and kept until the removal ends.
+  let inRemoval = false
+  let lease: HeldLease | undefined
+  const releaseLease = async () => {
+    const held = lease
+    lease = undefined
+    await held?.release()
+  }
   /**
    * What the OpenCode servers' running reports say about `worktree`, or undefined. Pi has no session
    * lookup: a job whose location cannot be established holds, and a report is live by its pid on this host.
@@ -100,9 +108,18 @@ export function sessionCoordination(cwd: string, deps: Pick<PiCleanupDeps, "lock
     return blockWithoutSessionLookup(receiptsRoot(), forms, { now: now(), host: hostname(), alive: processAlive }, canonicalDirectory)
   }
   return {
-    finalCheck: async (_worktree, others = []) => {
+    // Every verified spelling counts: git's registered path (`worktree`) and the receipt's own, raw and canonical.
+    finalCheck: async (worktree, others = []) => {
       spellings = others
-      return undefined
+      if (inRemoval && lease === undefined) {
+        mkdirSync(receiptsRoot(), { recursive: true })
+        const taken = await holdLease(runningLeaseFile(receiptsRoot()), { owner: LOCK_OWNER, now, ...(deps.lock?.waitMs === undefined ? {} : { waitMs: deps.lock.waitMs }) })
+        if (taken.kind === "failed") return `the running-work store lease could not be taken (${taken.reason}), so running work cannot be ruled out`
+        lease = taken
+      }
+      const blocked = runningBlock(worktree)
+      if (blocked !== undefined) await releaseLease()
+      return blocked
     },
     proofSection: async (worktree, read) => {
       const dir = await common()
@@ -116,16 +133,16 @@ export function sessionCoordination(cwd: string, deps: Pick<PiCleanupDeps, "lock
       if (dir === null) return { ok: false, reason: UNRESOLVED_COMMON }
       const outcome = await lockedWorktreeRemoval(dir, worktree, lock, {
         recheck: async () => removalBlock(dir, worktree, now()),
-        // Under the worktree lock, the store's lease from the last read of the reports to the end of the removal:
-        // a report an OpenCode server writes meanwhile waits for it (the order is always worktree lock, then lease).
+        // The store's lease is taken by the final check, after the proofs, and let go here when the removal ends
+        // (the order is always worktree lock, then lease): a report an OpenCode server writes meanwhile waits for it.
         remove: async (): Promise<CleanupFailure | RemovalFacts> => {
-          mkdirSync(receiptsRoot(), { recursive: true })
-          const held = await withLease(runningLeaseFile(receiptsRoot()), { owner: LOCK_OWNER, now, ...(deps.lock?.waitMs === undefined ? {} : { waitMs: deps.lock.waitMs }) }, async () => {
-            const blocked = runningBlock(worktree)
-            return blocked === undefined ? run() : ({ ok: false, reason: `worktree.held: observed ${blocked}, expected no running work; nothing was removed` } satisfies CleanupFailure)
-          })
-          if (held.kind === "failed") return { ok: false, reason: `the running-work store lease could not be taken (${held.reason}), so running work cannot be ruled out` }
-          return held.value
+          inRemoval = true
+          try {
+            return await run()
+          } finally {
+            inRemoval = false
+            await releaseLease()
+          }
         },
       })
       if (outcome.removed) return outcome.value

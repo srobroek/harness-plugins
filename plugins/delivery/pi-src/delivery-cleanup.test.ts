@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { devNull, hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent"
@@ -266,6 +266,65 @@ describe("an explicit cleanup in the session's repository", () => {
     expect(result.text).toStartWith("delivery_cleanup refused: worktree.held")
     expect(existsSync(f.linked)).toBe(true)
     expect(branchExists(f)).toBe(true)
+  })
+
+  // The reports are read at the final check, after the proofs: a report written while the proofs run is seen.
+  test("a report written during the proofs refuses the removal", async () => {
+    const f = await landed("opencode-report-during-proofs")
+    const real = forge(f)
+    let written = false
+    let statuses = 0
+    const run: CliRunner = (argv, options) => {
+      const git = argv[0] === "git" ? argv.slice(1 + SAFE_GIT_ARGS.length) : []
+      // The first status is the proofs outside the removal section; the second is its own, inside it.
+      if (git.includes("status") && ++statuses === 2) {
+        written = true
+        writeReport(receiptDirectory(f.env), {
+          sessionID: "ses_late",
+          jobs: [{ kind: "shell", sessionID: "ses_late", shellID: "sh1", command: `tail -f ${f.linked}/log` }],
+          at: Date.now(),
+          pid: process.pid,
+          host: hostname(),
+          instance: "opencode-server",
+        })
+      }
+      return real(argv, options)
+    }
+    const result = await call(cleanupTool({ ...deps(f), cleanup: { run, env: f.env } }), { receipt: f.receiptPath }, context(f.main, false))
+    expect(written).toBe(true)
+    expect(result.text).toContain("session ses_late has a shell running that names the worktree")
+    expect(existsSync(f.linked)).toBe(true)
+  })
+
+  test("a report that names only git's spelling of a worktree the receipt spells through a symlink refuses the removal", async () => {
+    const f = await landed("opencode-report-alias")
+    const home = join(scratch("opencode-report-alias-home"), "home")
+    symlinkSync(f.root, home, "dir")
+    const aliased = join(home, "linked")
+    const receipt = buildReceipt({
+      now: Date.parse(f.receipt.emittedAt) + 1,
+      emitter: f.receipt.emitter,
+      repo: f.receipt.repo,
+      pr: f.receipt.pr,
+      branch: f.receipt.branch,
+      worktree: { ...f.receipt.worktree, path: aliased },
+      beads: f.receipt.beads,
+      proof: f.receipt.proof,
+      outcome: "landed",
+    })
+    rmSync(f.receiptPath)
+    const receiptPath = writeReceipt(receipt, receiptDirectory(f.env, f.receipt.repo.key))
+    writeReport(receiptDirectory(f.env), {
+      sessionID: "ses_a",
+      jobs: [{ kind: "shell", sessionID: "ses_a", shellID: "sh1", command: `tail -f ${f.linked}/log` }],
+      at: Date.now(),
+      pid: process.pid,
+      host: hostname(),
+      instance: "opencode-server",
+    })
+    const result = await call(cleanupTool(deps(f)), { receipt: receiptPath }, context(f.main, false))
+    expect(result.text).toContain("names the worktree")
+    expect(existsSync(f.linked)).toBe(true)
   })
 
   test("a malformed report file holds the removal", async () => {

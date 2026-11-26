@@ -310,3 +310,36 @@ export async function withLease<T>(lockPath: string, options: LeaseOptions, work
     }
   }
 }
+
+/** A lease taken by {@link holdLease}: let it go with `release`. */
+export type HeldLease = { kind: "held"; release: () => Promise<void> }
+
+/**
+ * Take the lease at `lockPath` and keep it, renewed, until `release` is called, for a caller whose
+ * critical section spans several calls. A failed result says why it could not be taken.
+ */
+export async function holdLease(lockPath: string, options: LeaseOptions): Promise<HeldLease | Extract<LeaseResult<never>, { kind: "failed" }>> {
+  let release: () => void = () => {}
+  const held = new Promise<void>((done) => {
+    release = done
+  })
+  let entered: (value: "held") => void = () => {}
+  const inside = new Promise<"held">((done) => {
+    entered = done
+  })
+  const running = withLease(lockPath, options, () => {
+    entered("held")
+    return held
+  })
+  const first = await Promise.race([inside, running])
+  if (first === "held") {
+    return {
+      kind: "held",
+      release: async () => {
+        release()
+        await running
+      },
+    }
+  }
+  return first.kind === "failed" ? first : { kind: "failed", reason: "the lease was not entered" }
+}

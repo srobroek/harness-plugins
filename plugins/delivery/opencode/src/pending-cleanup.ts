@@ -31,7 +31,7 @@ import { hostname } from "node:os"
 import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { type EventWatchDeps, watchEvents } from "@srobroek/opencode-lib/event-watch"
-import { type LeaseOptions, withLease } from "@srobroek/opencode-lib/lease-lock"
+import { holdLease, type LeaseOptions, withLease } from "@srobroek/opencode-lib/lease-lock"
 import {
   clearReport,
   type JobLookup,
@@ -341,32 +341,13 @@ export function createPendingCleanup(deps: PendingDeps) {
   }
   /** Take the lease and keep it until `release`; a string is why it could not be taken. */
   const takeStore = async (): Promise<{ release: () => Promise<void> } | string> => {
+    const why = (reason: string) => `the running-work store lease could not be taken (${reason}), so running work cannot be ruled out`
     try {
       mkdirSync(receiptDirectory(env), { recursive: true })
-      let release: () => void = () => {}
-      const held = new Promise<void>((done) => {
-        release = done
-      })
-      let entered: () => void = () => {}
-      const inside = new Promise<"held">((done) => {
-        entered = () => done("held")
-      })
-      const running = withLease(leaseFile(), leaseOptions(), () => {
-        entered()
-        return held
-      })
-      const first = await Promise.race([inside, running])
-      if (first === "held") {
-        return {
-          release: async () => {
-            release()
-            await running
-          },
-        }
-      }
-      return `the running-work store lease could not be taken (${first.kind === "failed" ? first.reason : "it was not entered"}), so running work cannot be ruled out`
+      const taken = await holdLease(leaseFile(), leaseOptions())
+      return taken.kind === "held" ? taken : why(taken.reason)
     } catch (error) {
-      return `the running-work store lease could not be taken (${error instanceof Error ? error.message : String(error)}), so running work cannot be ruled out`
+      return why(error instanceof Error ? error.message : String(error))
     }
   }
   const releaseStore = async (hold: StoreHold | undefined): Promise<void> => {
