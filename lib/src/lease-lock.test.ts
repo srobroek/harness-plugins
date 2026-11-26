@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { backoffDelayMs, type LeaseRecord, leaseAbandoned, withLease } from "./lease-lock.ts"
+import { backoffDelayMs, holdLease, type LeaseRecord, leaseAbandoned, withLease } from "./lease-lock.ts"
 
 const dirs: string[] = []
 const scratch = () => {
@@ -290,5 +290,26 @@ describe("withLease", () => {
       const out = await withLease(lock, { ...base, waitMs: 500, alive: (pid) => pid !== 999_999 }, () => "ran")
       expect(out).toEqual({ kind: "done", value: "ran" })
     })
+  })
+})
+
+describe("holdLease", () => {
+  test("keeps the lock until it is released, and another holder gives up meanwhile", async () => {
+    const lock = join(scratch(), "a.lock")
+    const held = await holdLease(lock, base)
+    if (held.kind !== "held") throw new Error("not held")
+    expect(tokenOf(lock)).not.toBe("")
+    const other = await withLease(lock, base, () => 1)
+    expect(other).toMatchObject({ kind: "failed", busy: true })
+    await held.release()
+    expect(() => readFileSync(lock)).toThrow()
+    expect((await withLease(lock, base, () => 2)).kind).toBe("done")
+  })
+
+  test("says why when the lock cannot be taken", async () => {
+    const lock = join(scratch(), "a.lock")
+    plant(lock, record())
+    const held = await holdLease(lock, base)
+    expect(held).toMatchObject({ kind: "failed", busy: true })
   })
 })

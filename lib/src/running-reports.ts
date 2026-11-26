@@ -60,16 +60,16 @@ export function parseReport(text: string): RunningReport | undefined {
     return undefined
   }
   if (!isObject(raw) || typeof raw.sessionID !== "string" || raw.sessionID === "") return undefined
-  if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || typeof raw.pid !== "number") return undefined
-  if (typeof raw.host !== "string" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs)) return undefined
+  if (typeof raw.at !== "number" || !Number.isFinite(raw.at)) return undefined
+  if (typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid < 1) return undefined
+  if (typeof raw.host !== "string" || raw.host === "" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs)) return undefined
   const jobs: ReportJob[] = []
   for (const job of raw.jobs) {
     if (!isObject(job) || typeof job.kind !== "string") return undefined
-    const sessionID = optionalString(job.sessionID)
-    const childSessionID = optionalString(job.childSessionID)
-    const shellID = optionalString(job.shellID)
-    const command = optionalString(job.command)
-    const cwd = optionalString(job.cwd)
+    // A field that is present must be text: a report that says something else is not one.
+    const fields = [job.sessionID, job.childSessionID, job.shellID, job.command, job.cwd]
+    if (fields.some((field) => field !== undefined && typeof field !== "string")) return undefined
+    const [sessionID, childSessionID, shellID, command, cwd] = fields.map(optionalString)
     jobs.push({
       kind: job.kind,
       ...(sessionID === undefined ? {} : { sessionID }),
@@ -175,15 +175,15 @@ export const reportVersion = (report: RunningReport): string => `${report.at}:${
 export type ReportClock = { now: number; host: string; instance: string; alive: (pid: number) => boolean; expiryMs?: number }
 
 /**
- * A report counts until its file is older than the expiry on the reader's clock. One from another host
- * counts until then, whatever its pid says. One from this host's other server counts while its pid is
- * alive; from this server, always (its session lookups below can say more). Pure.
+ * Whether a report still counts. On this host the reporter's process decides, and its age does not: a
+ * report of this server counts (its process is this one), and one of another server on this host counts
+ * while its pid is alive, however old its file is. A report from another host cannot be judged by pid, so
+ * it counts until its file is older than the expiry on the reader's clock. Pure.
  */
 export function reportLive(report: StoredReport, clock: ReportClock): boolean {
-  if (clock.now - report.mtimeMs >= (clock.expiryMs ?? HOLD_EXPIRY_MS)) return false
   if (report.instance === clock.instance) return true
   if (report.host === clock.host) return clock.alive(report.pid)
-  return true
+  return clock.now - report.mtimeMs < (clock.expiryMs ?? HOLD_EXPIRY_MS)
 }
 
 const sameServer = (report: RunningReport, clock: ReportClock): boolean => report.instance === clock.instance

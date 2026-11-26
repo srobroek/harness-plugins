@@ -3308,6 +3308,7 @@ async function cleanupDelivery(params, sessionCwd, deps = {}) {
     proofSection: coordination.proofSection,
     removalSection: coordination.removalSection,
     finalCheck: coordination.finalCheck,
+    beforeRemoval: coordination.beforeRemoval,
     afterRemoval: coordination.afterRemoval,
     host: coordination.host,
     authorize: coordination.authorize ?? deps.authorize
@@ -3469,6 +3470,10 @@ async function cleanupInRepository(params, cwd, deps) {
     const rebound = markersStillBound(boundary, executionDir, executionPin);
     if (rebound !== null)
       return rebound;
+    const late = deps.beforeRemoval?.();
+    if (late !== undefined) {
+      return refuse2("worktree.held", late, "no owner, hold, denial or competing remover at the moment of removal; nothing was removed");
+    }
     let failure = null;
     let stopped = false;
     let refusedClean = false;
@@ -5908,6 +5913,31 @@ async function withLease(lockPath, options, work) {
     }
   }
 }
+async function holdLease(lockPath, options) {
+  let release = () => {};
+  const held = new Promise((done) => {
+    release = done;
+  });
+  let entered = () => {};
+  const inside = new Promise((done) => {
+    entered = done;
+  });
+  const running = withLease(lockPath, options, () => {
+    entered("held");
+    return held;
+  });
+  const first = await Promise.race([inside, running]);
+  if (first === "held") {
+    return {
+      kind: "held",
+      release: async () => {
+        release();
+        await running;
+      }
+    };
+  }
+  return first.kind === "failed" ? first : { kind: "failed", reason: "the lease was not entered" };
+}
 
 // lib/src/running-reports.ts
 import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
@@ -6207,19 +6237,20 @@ function parseReport(text) {
   }
   if (!isObject3(raw) || typeof raw.sessionID !== "string" || raw.sessionID === "")
     return;
-  if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || typeof raw.pid !== "number")
+  if (typeof raw.at !== "number" || !Number.isFinite(raw.at))
     return;
-  if (typeof raw.host !== "string" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
+  if (typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid < 1)
+    return;
+  if (typeof raw.host !== "string" || raw.host === "" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
     return;
   const jobs = [];
   for (const job of raw.jobs) {
     if (!isObject3(job) || typeof job.kind !== "string")
       return;
-    const sessionID = optionalString(job.sessionID);
-    const childSessionID = optionalString(job.childSessionID);
-    const shellID = optionalString(job.shellID);
-    const command = optionalString(job.command);
-    const cwd = optionalString(job.cwd);
+    const fields = [job.sessionID, job.childSessionID, job.shellID, job.command, job.cwd];
+    if (fields.some((field) => field !== undefined && typeof field !== "string"))
+      return;
+    const [sessionID, childSessionID, shellID, command, cwd] = fields.map(optionalString);
     jobs.push({
       kind: job.kind,
       ...sessionID === undefined ? {} : { sessionID },
@@ -6306,13 +6337,11 @@ function reportsWritable(receiptsRoot) {
 }
 var reportVersion = (report) => `${report.at}:${report.instance}:${JSON.stringify(report.jobs)}`;
 function reportLive(report, clock) {
-  if (clock.now - report.mtimeMs >= (clock.expiryMs ?? HOLD_EXPIRY_MS))
-    return false;
   if (report.instance === clock.instance)
     return true;
   if (report.host === clock.host)
     return clock.alive(report.pid);
-  return true;
+  return clock.now - report.mtimeMs < (clock.expiryMs ?? HOLD_EXPIRY_MS);
 }
 var sameServer = (report, clock) => report.instance === clock.instance;
 var namesWorktree = (command, forms) => command !== undefined && forms.some((form) => command.includes(form));
@@ -6372,6 +6401,7 @@ function reportBlock(reports, forms, lookup, clock, canonical) {
   }
   return;
 }
+var runningLeaseFile = (receiptsRoot) => join8(receiptsRoot, ".running.lock");
 
 // lib/src/session-eviction.ts
 import { basename as basename4, dirname as dirname5 } from "path";
@@ -6771,6 +6801,7 @@ async function authorizeExplicit(pending, ask, sessionID, request) {
 var SERVER_INSTANCE = `${hostname2()}:${process.pid}:${Date.now().toString(36)}`;
 var SESSION_LOOKUP_MS = 5000;
 var IDLE_PASS_MS = 60000;
+var DISPOSE_WAIT_MS = 1e4;
 function createPendingCleanup(deps) {
   const { ctx, cwd, env } = deps;
   const now = deps.now ?? Date.now;
@@ -6779,13 +6810,14 @@ function createPendingCleanup(deps) {
   const observationMs = deps.cleanup?.bounds?.refReadMs ?? CLEANUP_BOUNDS.refReadMs;
   const sessionLookupMs = deps.sessionLookupMs ?? SESSION_LOOKUP_MS;
   const unsettled = new Map;
+  const retrying = new Set;
   let generation = 0;
   let lastAt = 0;
   const stamp = () => {
     lastAt = Math.max(now(), lastAt + 1);
     return lastAt;
   };
-  const leaseFile = () => join10(receiptDirectory(env), ".running.lock");
+  const leaseFile = () => runningLeaseFile(receiptDirectory(env));
   const leaseOptions = () => ({
     owner: "delivery running reports",
     ...deps.lock?.waitMs === undefined ? {} : { waitMs: deps.lock.waitMs },
@@ -6805,32 +6837,13 @@ function createPendingCleanup(deps) {
     return result.value;
   };
   const takeStore = async () => {
+    const why = (reason) => `the running-work store lease could not be taken (${reason}), so running work cannot be ruled out`;
     try {
       mkdirSync8(receiptDirectory(env), { recursive: true });
-      let release = () => {};
-      const held = new Promise((done) => {
-        release = done;
-      });
-      let entered = () => {};
-      const inside = new Promise((done) => {
-        entered = () => done("held");
-      });
-      const running = withLease(leaseFile(), leaseOptions(), () => {
-        entered();
-        return held;
-      });
-      const first = await Promise.race([inside, running]);
-      if (first === "held") {
-        return {
-          release: async () => {
-            release();
-            await running;
-          }
-        };
-      }
-      return `the running-work store lease could not be taken (${first.kind === "failed" ? first.reason : "it was not entered"}), so running work cannot be ruled out`;
+      const taken = await holdLease(leaseFile(), leaseOptions());
+      return taken.kind === "held" ? taken : why(taken.reason);
     } catch (error) {
-      return `the running-work store lease could not be taken (${error instanceof Error ? error.message : String(error)}), so running work cannot be ruled out`;
+      return why(error instanceof Error ? error.message : String(error));
     }
   };
   const releaseStore = async (hold) => {
@@ -7243,6 +7256,7 @@ function createPendingCleanup(deps) {
         forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])];
         return;
       },
+      beforeRemoval: () => stuck(),
       afterRemoval: async (worktree) => {
         const lane = await laneSessionsIn(client, roots, forms.length === 0 ? [worktree] : forms);
         return moveLaneHome(client, lane, canonicalCheckout(await commonOf(repo) ?? undefined, repo.cwd));
@@ -7483,7 +7497,10 @@ function createPendingCleanup(deps) {
       clearTimeout(timer);
     }
   };
-  const retryNow = (sessionID, idle) => disposed ? Promise.resolve() : serial(() => run(sessionID, idle)).catch((error) => console.error("delivery: pending cleanup failed", error));
+  const retryNow = (sessionID, idle) => disposed ? Promise.resolve() : serial(async () => {
+    await retryUnsettled();
+    return run(sessionID, idle);
+  }).catch((error) => console.error("delivery: pending cleanup failed", error));
   const schedule = (sessionID, idle) => {
     if (disposed)
       return;
@@ -7517,14 +7534,16 @@ function createPendingCleanup(deps) {
     const lookup = Promise.resolve().then(() => ctx.session.get({ sessionID: id })).then((session) => ({ state: "at", directory: session?.location?.directory }), (error) => isSessionNotFound(error, id) ? { state: "missing" } : { state: "unknown" });
     return Promise.race([lookup, bound]).finally(() => clearTimeout(timer));
   };
+  const stuck = () => {
+    const first = unsettled.entries().next().value;
+    return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`;
+  };
   const reportClock = () => ({ now: (deps.fileNow ?? Date.now)(), host: hostname2(), instance: SERVER_INSTANCE, alive: processAlive });
   const runningBlock = async (worktree, hold, spellings = []) => {
-    const stuck = () => {
-      const first = unsettled.entries().next().value;
-      return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`;
-    };
     const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out";
     const root = receiptDirectory(env);
+    if (hold?.lease === undefined)
+      await retryUnsettled();
     const early = stuck();
     if (early !== undefined)
       return early;
@@ -7555,14 +7574,17 @@ function createPendingCleanup(deps) {
       return why;
     };
     try {
+      if (leased) {
+        const peek = readReports(root);
+        if (!peek.unreadable)
+          await lookUp(neededLookups(peek.reports.filter((report) => seen.get(report.sessionID) !== reportVersion(report)), forms, reportClock()));
+      }
       const again = stuck();
       if (again !== undefined)
         return await refuse(again);
       const last = readReports(root);
       if (last.unreadable)
         return await refuse(unreadable);
-      if (leased)
-        await lookUp(neededLookups(last.reports.filter((report) => seen.get(report.sessionID) !== reportVersion(report)), forms, reportClock()));
       const blocked = reportBlock(last.reports, forms, (id) => cache.get(id), reportClock(), canonicalDirectory);
       if (blocked === undefined)
         return;
@@ -7574,14 +7596,17 @@ function createPendingCleanup(deps) {
       throw error;
     }
   };
-  const beginReport = (sessionID) => {
+  const beginReport = (sessionID, background) => {
     const gen = ++generation;
-    unsettled.set(sessionID, { gen, reason: "its report is still waiting to be written" });
+    unsettled.set(sessionID, { gen, at: stamp(), reason: "its report is still waiting to be written", failed: false, background });
     return gen;
   };
-  const recordHolds = async (sessionID, gen, background) => {
+  const recordHolds = async (sessionID, gen) => {
+    const entry = unsettled.get(sessionID);
+    if (entry === undefined || entry.gen !== gen)
+      return;
     const root = receiptDirectory(env);
-    const at = stamp();
+    const { at, background } = entry;
     const jobs = background.map((job) => ({
       kind: job.kind,
       ...job.sessionID === undefined ? {} : { sessionID: job.sessionID },
@@ -7592,7 +7617,7 @@ function createPendingCleanup(deps) {
     }));
     try {
       await underStore(() => {
-        if (!unsettled.has(sessionID))
+        if (unsettled.get(sessionID)?.gen !== gen)
           return;
         if (background.length === 0)
           clearReport(root, sessionID, at);
@@ -7604,10 +7629,27 @@ function createPendingCleanup(deps) {
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
       const mark = unsettled.get(sessionID);
-      if (mark !== undefined && mark.gen === gen)
+      if (mark !== undefined && mark.gen === gen) {
         mark.reason = why;
+        mark.failed = true;
+      }
       console.error(`delivery: could not record the running work of ${sessionID}: ${why}`);
     }
+  };
+  const retryUnsettled = async (except) => {
+    const due = [...unsettled].filter(([id, entry]) => entry.failed && id !== except && !retrying.has(id));
+    if (due.length === 0 || !reportsWritable(receiptDirectory(env)))
+      return;
+    await Promise.all(due.map(async ([id, entry]) => {
+      retrying.add(id);
+      entry.failed = false;
+      entry.reason = "its report is being written again";
+      try {
+        await recordHolds(id, entry.gen);
+      } finally {
+        retrying.delete(id);
+      }
+    }));
   };
   const forgetSession = async (sessionID) => {
     unsettled.delete(sessionID);
@@ -7629,8 +7671,9 @@ function createPendingCleanup(deps) {
     });
     try {
       registrations.push(await ctx.session.hook("experimental.idle", async (input) => {
-        const gen = beginReport(input.sessionID);
-        await recordHolds(input.sessionID, gen, input.background ?? []);
+        const gen = beginReport(input.sessionID, input.background ?? []);
+        await recordHolds(input.sessionID, gen);
+        await retryUnsettled(input.sessionID);
         await boundedBy(retryNow(input.sessionID, true), deps.idlePassMs ?? IDLE_PASS_MS);
       }));
     } catch {}
@@ -7643,7 +7686,7 @@ function createPendingCleanup(deps) {
     timers.clear();
     for (const registration of registrations.reverse())
       await registration.dispose();
-    await chain;
+    await boundedBy(chain, deps.disposeWaitMs ?? DISPOSE_WAIT_MS);
   };
   const settle = async () => {
     await new Promise((done) => setTimeout(done, 0));
