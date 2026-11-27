@@ -776,6 +776,9 @@
         "opencode": {
           "skills": [
             "business-rules-cel",
+            "business-rules-cel-authoring",
+            "business-rules-cel-debugging",
+            "business-rules-cel-testing",
             "business-rules-ci",
             "business-rules-guide",
             "business-rules-testing"
@@ -793,6 +796,9 @@
         "claude": {
           "skills": [
             "business-rules-cel",
+            "business-rules-cel-authoring",
+            "business-rules-cel-debugging",
+            "business-rules-cel-testing",
             "business-rules-ci",
             "business-rules-guide",
             "business-rules-testing"
@@ -808,6 +814,9 @@
         "omp": {
           "skills": [
             "business-rules-cel",
+            "business-rules-cel-authoring",
+            "business-rules-cel-debugging",
+            "business-rules-cel-testing",
             "business-rules-ci",
             "business-rules-guide",
             "business-rules-testing"
@@ -823,6 +832,9 @@
         "pi": {
           "skills": [
             "business-rules-cel",
+            "business-rules-cel-authoring",
+            "business-rules-cel-debugging",
+            "business-rules-cel-testing",
             "business-rules-ci",
             "business-rules-guide",
             "business-rules-testing"

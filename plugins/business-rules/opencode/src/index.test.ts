@@ -7,6 +7,9 @@ test("registers the business-rules skills and disposes them", async () => {
   const cleanup = await plugin.setup(fake.context)
   expect([...fake.skills.keys()].sort()).toEqual([
     "business-rules-cel",
+    "business-rules-cel-authoring",
+    "business-rules-cel-debugging",
+    "business-rules-cel-testing",
     "business-rules-ci",
     "business-rules-guide",
     "business-rules-testing",

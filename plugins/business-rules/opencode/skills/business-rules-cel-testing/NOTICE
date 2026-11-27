@@ -1,0 +1,26 @@
+business-rules-cel-testing
+
+This skill is adapted from the "cel-testing" skill of cel-expr/skills:
+
+  https://github.com/cel-expr/skills/tree/a41927f7d836d3e2eeec6c809b66fa444093427a/skills/cel-testing
+  Commit a41927f7d836d3e2eeec6c809b66fa444093427a (2026-11-25)
+
+The upstream source files carry "Copyright 2026 Google LLC". The upstream work is licensed under the Apache
+License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0. The upstream repository ships no NOTICE
+file. This adaptation is distributed under the same licence.
+
+references/test_cases_schema.json is copied unchanged from skills/cel-testing/references/ at that commit.
+
+Changes made to SKILL.md in srobroek/harness-plugins, 2026-11:
+
+- Renamed the skill to business-rules-cel-testing, and said when to use the business-rules-testing skill instead.
+- Pointed every command at the project's generated environment and descriptor set (-env and -fds). The skill stops
+  when none covers the scope, and never writes an environment.
+- Replaced "go install ...@latest" with an install from a verified release.
+- Removed -proto_db and the protobuf-type references.
+- Noted the inputSchema bug (a double reported as boolean after has()), and took field types from the generated
+  environment instead.
+- Added the presence states to the generated cases, and the steps that save the suite and add its cases to the
+  project's suite.
+- Noted that the v0.4.0 release has no -format=policy, and removed skippedTestCases, which it does not have.
+- Left out the upstream examples, which hand-write an environment.

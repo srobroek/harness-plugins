@@ -44,3 +44,16 @@ The plugin registers these skills from `skills/`, unless a skill with the same i
 - `business-rules-ci`: the CI jobs: environment drift, the reference checker over every rule file, bundle digest
   verification, the per-engine suites, conformance against a failure baseline, and engine pins with a rerun on
   each bump. It has a `mise.toml` and `justfile` layout and a GitHub Actions workflow with pinned actions.
+- `business-rules-cel-authoring`, `business-rules-cel-debugging` and `business-rules-cel-testing`: write, fix and
+  test one expression with the `cel-expr` CLI, against the project's generated environment. Each one stops when
+  no generated environment covers the scope.
+
+## Vendored skills
+
+The three `business-rules-cel-*` skills are adapted from the `cel-authoring`, `cel-debugging` and `cel-testing`
+skills of [cel-expr/skills](https://github.com/cel-expr/skills), at commit
+`a41927f7d836d3e2eeec6c809b66fa444093427a`, under the Apache License 2.0. Each skill directory has a `NOTICE`
+file with the upstream source and the list of changes. The main change replaces upstream's step that creates an
+environment: these skills read the generated one. Of upstream's six skills, the plugin vendors these three.
+`cel-optimize` would add Java to the toolchain, and `cel-conformance-testing` and `cel-doc-generator` serve the
+authors of CEL engines.
