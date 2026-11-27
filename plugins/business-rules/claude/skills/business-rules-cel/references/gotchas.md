@@ -13,8 +13,9 @@ and the 2026-11 engine spike.
 - Comparing an `int` with a `double` checks only when the profile enables `cross_type_numeric_comparisons`. Keep
   that option off unless every engine enforces it. An evaluator that does not check (@bufbuild/cel) evaluates the
   comparison anyway.
-- At runtime, equality between different types is `false`, not an error. `decision.status == 1` (a string against
-  an int) is caught only by a checker that follows cel-go. cel-core's checker accepts it.
+- At runtime, equality between values of different non-numeric types is `false`, not an error.
+  `decision.status == 1` (a string against an int) is caught only by a checker that follows cel-go. cel-core's
+  checker accepts it. Numbers compare by value across types: unchecked, `1.0 == 1` is `true`.
 - Test: a reject case for each mixed-type operation the rules are likely to contain.
 
 ## `has()` and default values

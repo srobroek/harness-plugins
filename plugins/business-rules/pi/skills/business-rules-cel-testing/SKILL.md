@@ -28,8 +28,8 @@ Never write an environment for a test.
 2. **Generate test cases.** Write cases from the input and output schemas, and from the field kinds in the
    descriptor set.
 3. **Evaluate.** Run the cases with `cel-expr eval -tests`.
-4. **Raise coverage.** Add cases until `cel-expr eval` reports 100% node and branch coverage. The coverage
-   threshold is the check.
+4. **Raise coverage.** Add cases until `cel-expr eval` reports 100% node and branch coverage. Reaching it is your
+   check: the CI `authoring-tests` job reports coverage but does not enforce it.
 
 ### 1. Compile the expression
 

@@ -135,7 +135,7 @@ the schema skeleton only.
 
 | JSON Schema | proto3 | CEL |
 | --- | --- | --- |
-| Required `string`, `integer`, `number`, `boolean` | `string`, `int64`, `double`, `bool` | The same. |
+| Required `string`, `integer`, `number`, `boolean` | `string`, `int64`, `double`, `bool` | `string`, `int` (64-bit), `double`, `bool` |
 | Optional scalar | `optional` scalar (field presence) | The scalar; `has()` tells absent from zero. |
 | Nullable scalar (`[T, null]`, or `oneOf` of a scalar and `null`) | `google.protobuf.*Value` wrapper | `wrapper(T)`; null when absent. |
 | Sealed object | message | message |

@@ -19,7 +19,7 @@ This skill lays out the CI jobs that enforce the `business-rules-cel` standard. 
 | `check` | The reference checker over every rule file, then build the bundle and verify its digests | A descriptor set that does not match its manifest, any issue (printed as `file:line:col: message`), a wrong output type for a slot, a refused policy feature, or a digest that does not match | G1, P2, C1 |
 | `engines` | The supported-profile suite on each selected engine, one matrix cell per engine, against the bundle from `check`, including the JCS vector | A case of the engine's role fails, the adapter does not reproduce the JCS vector, or the two checkers of record disagree on a standalone expression | G3 |
 | `conformance` | cel-spec's simple tests on every engine, compared with the committed failure baseline | An engine has no results, or its failure set changed | G3, G4 |
-| `authoring-tests` | `cel-expr eval -tests` over the typed test cases, with a verified `cel-expr` release | A case fails, or coverage is below the project's threshold | G8 (the CLI reads the generated environment) |
+| `authoring-tests` | `cel-expr eval -tests` over the typed test cases, with a verified `cel-expr` release | A case fails. Coverage is report-only: the recipe fails only on the CLI's exit status, which a failing case sets, and no step compares coverage with a threshold | G8 (the CLI reads the generated environment) |
 | `ci-gate` | The one required check, over every job above | Any job failed | |
 
 Notes on each job:
@@ -153,7 +153,7 @@ install-cel-expr:
       --source-uri github.com/cel-expr/skills --source-tag "v${v}"
     tar -xzf "$asset" && install -m 0755 cel-expr "$HOME/.local/bin/cel-expr"
 
-# Typed test cases with coverage, against the generated environment.
+# Typed test cases against the generated environment. The CLI prints coverage; nothing here enforces a threshold.
 # Layout: rules/<scope>/<rule>.cel, with its cases in rules/tests/cli/<scope>/<rule>.tests.json.
 rules-cli-tests:
     #!/usr/bin/env bash

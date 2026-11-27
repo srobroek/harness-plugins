@@ -7,7 +7,6 @@ supported-profile suite on every bump (`business-rules-ci`).
 | --- | --- | --- | --- |
 | `cel-expr-python` | `0.1.4` | Checker of record for expressions checked at load; evaluator | Checking and evaluating rules in a Python host |
 | `protobuf` | `7.36.2` | Activation parser | `descriptor_pool` from the FileDescriptorSet, `json_format.ParseDict` for records |
-| `common-expression-language` | `0.10.0` | None | Do not use it for typed rules (below) |
 
 ## cel-expr-python
 

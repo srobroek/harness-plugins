@@ -47,9 +47,24 @@ e, err := cel.NewEnv(opts...)
   Compare `ast.OutputType()` with the slot's type (G1).
 - **Evaluate.** `out, _, err := prg.Eval(activation)` returns a non-nil `err` when the rule fails to evaluate.
   The adapter turns it into an `EvalError` value (`business-rules-code`).
-- **Write the CheckedExpr.** Marshal `anypb.New(cel.AstToCheckedExpr(ast))` with `proto.Marshal`, write the bytes,
-  and hash those exact bytes into the bundle entry (P2). Two runs write different bytes for the same rule, so
-  never compare encodings.
+- **Write the CheckedExpr.** `cel.AstToCheckedExpr(ast)` returns the message and an error: handle the error,
+  then wrap the message with `anypb.New` and handle its error too. Marshal the `Any` with `proto.Marshal`, write
+  the bytes, and hash those exact bytes into the bundle entry (P2). Two runs write different bytes for the same
+  rule, so never compare encodings.
+
+  ```go
+  checked, err := cel.AstToCheckedExpr(ast)
+  if err != nil {
+      return err
+  }
+  payload, err := anypb.New(checked)
+  if err != nil {
+      return err
+  }
+  // AstToCheckedExpr returns google.api.expr.v1alpha1.CheckedExpr, which has the same wire form as
+  // cel.expr.CheckedExpr. P2 ships the cel.expr name.
+  payload.TypeUrl = "type.googleapis.com/cel.expr.CheckedExpr"
+  ```
 - **Cost.** cel-go has a static cost estimate, and a runtime cost limit (`cel.CostLimit` as a program option)
   that stops an evaluation. Label the static figure an estimate (G5). Strings version 4 has no cost model: cost
   support starts at version 5.
