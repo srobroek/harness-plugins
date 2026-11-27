@@ -1,3 +1,9 @@
+## delivery [0.17.2](https://github.com/srobroek/harness-plugins/compare/delivery--v0.17.1...delivery--v0.17.2) (2026-11-27)
+
+### Bug Fixes
+
+* **delivery:** per-activation running-report identity and pending-delete tokens ([#229](https://github.com/srobroek/harness-plugins/issues/229)) ([63de81b](https://github.com/srobroek/harness-plugins/commit/63de81bd203673c4fcfbd5b8a24edf02b956e392))
+
 ## delivery [0.17.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.17.0...delivery--v0.17.1) (2026-11-26)
 
 ### Bug Fixes
