@@ -588,7 +588,7 @@ Use the implementer-high agent to answer one question about bead <id>: what is i
 Use the code-reviewer agent to review bead <new-id>: say only whether it has a description.
 ```
 
-**Expect:** the spawn runs without an FO-5 refusal. Needs delivery.
+**Expect:** the spawn runs without an FO-5 refusal. Needs agent-reviewer.
 **If not:** `REVIEW_AGENTS` in `plugins/beads/opencode/src/subagent-routing.ts`.
 
 ### Gate `pr-bead-link-gate` (needs a GitHub repo with a live ledger)
