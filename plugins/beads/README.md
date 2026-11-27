@@ -264,7 +264,8 @@ When the location has a store, a second `execute.before` hook checks each new
 3. If a named bead sets `metadata.execution_agent_type` and the spawn's agent
    matches none of them, the call is refused. The refusal names each bead's agent
    and its `execution_reasoning_effort`. A namespaced agent (`delivery:implementer`)
-   matches `implementer`.
+   matches `implementer`. A bead typed `implementer` or `implementer-high` also
+   accepts `coder`, because `implementer` cannot work in lane worktrees.
 4. A spawn to `implementer-high` that no named bead asks for goes ahead, with an
    advisory appended to the result: use `implementer` unless the brief states an
    implementer-high criterion.

@@ -591,6 +591,19 @@ Use the code-reviewer agent to review bead <new-id>: say only whether it has a d
 **Expect:** the spawn runs without an FO-5 refusal. Needs agent-reviewer.
 **If not:** `REVIEW_AGENTS` in `plugins/beads/opencode/src/subagent-routing.ts`.
 
+```text
+Run exactly: BEADS_ACTOR=manual/test bd create "coder route probe" -t task --metadata '{"execution_agent_type":"implementer"}' --json
+```
+
+Then, with the new id:
+
+```text
+Use the coder agent to answer one question about bead <coder-id>: what is its title?
+```
+
+**Expect:** the spawn runs without an FO-5 refusal. The gate refuses the same spawn for the `researcher` bead above.
+**If not:** `ALTERNATE_AGENTS` in `plugins/beads/opencode/src/subagent-routing.ts`.
+
 ### Gate `pr-bead-link-gate` (needs a GitHub repo with a live ledger)
 
 ```text

@@ -1,7 +1,7 @@
 /**
  * Delivery FO-5 routing for `subagent` spawns: a bead whose metadata names an
  * `execution_agent_type` goes to that agent, and `implementer-high` only when a
- * bead says so. Orchestrator spawns (agent `general`, tier or legacy role `orchestrate`)
+ * bead says so; `coder` also serves a bead typed `implementer` or `implementer-high`. Orchestrator spawns (agent `general`, tier or legacy role `orchestrate`)
  * and read-only review spawns (`REVIEW_AGENTS`) are exempt. Reads `bd show --json` on a short budget and fails open.
  */
 
@@ -25,6 +25,12 @@ export const ORCHESTRATE_TIER = "orchestrate"
 
 /** Read-only review agents FO-5 does not judge: a review of a bead's change is not that bead's execution. */
 export const REVIEW_AGENTS: readonly string[] = ["code-reviewer", "security-auditor", "security-reviewer"]
+
+/** Agents a bead's `execution_agent_type` also accepts: `coder` works in lane worktrees, which `implementer` cannot. */
+export const ALTERNATE_AGENTS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["implementer", ["coder"]],
+  [HIGH_TIER_AGENT, ["coder"]],
+])
 
 /** At most this many bead ids are looked up per spawn. */
 const MAX_IDS = 8
@@ -95,10 +101,16 @@ export function agentMatches(agent: string, agentType: string): boolean {
   return a === t || a.endsWith(`:${t}`) || a.endsWith(`/${t}`)
 }
 
+/** Whether `agent` may execute a bead typed `agentType`: the named agent or one of its `ALTERNATE_AGENTS`. */
+export function agentServes(agent: string, agentType: string): boolean {
+  const alternates = ALTERNATE_AGENTS.get(agentType.toLowerCase()) ?? []
+  return agentMatches(agent, agentType) || alternates.some((alternate) => agentMatches(agent, alternate))
+}
+
 /** Judge one spawn of `agent` against the beads its prompt names. */
 export function decideRouting(agent: string, beads: ReadonlyArray<BeadRouting>): RoutingDecision {
   const typed = beads.filter((bead) => bead.agentType !== undefined)
-  if (typed.length > 0 && !typed.some((bead) => agentMatches(agent, bead.agentType as string))) {
+  if (typed.length > 0 && !typed.some((bead) => agentServes(agent, bead.agentType as string))) {
     const named = typed.map((bead) => {
       const effort = bead.effort === undefined ? "" : `, execution_reasoning_effort=${bead.effort}`
       return `${bead.id} (execution_agent_type=${bead.agentType}${effort})`
