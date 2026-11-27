@@ -73,6 +73,15 @@ describe("decideRouting", () => {
     expect(decideRouting("mechanic", [{ id: "p-2aa", agentType: "researcher" }]).kind).toBe("block")
   })
 
+  test.each(["implementer", "implementer-high"])("accepts coder for a bead typed %s", (agentType) => {
+    expect(decideRouting("coder", [{ id: "p-1aa", agentType }])).toEqual({ kind: "allow" })
+    expect(decideRouting("x/coder", [{ id: "p-1aa", agentType }])).toEqual({ kind: "allow" })
+  })
+
+  test.each(["researcher", "operator"])("refuses coder for a bead typed %s", (agentType) => {
+    expect(decideRouting("coder", [{ id: "p-1aa", agentType }]).kind).toBe("block")
+  })
+
   test("any named bead's agent satisfies the rule", () => {
     expect(decideRouting("researcher", [typed, { id: "p-2aa", agentType: "researcher" }]).kind).toBe("allow")
   })
@@ -166,9 +175,15 @@ describe("registerAgentRouting", () => {
   )
 
   test("still refuses a coder or mechanic spawn naming a bead routed elsewhere", async () => {
-    const { fake, cleanup } = await start(project(), implementerBeads)
+    const { fake, cleanup } = await start(project(), shown([{ id: "proj-a2c", metadata: { execution_agent_type: "researcher" } }]))
     for (const agent of ["coder", "mechanic"])
-      await expect(fake.fire.tool("execute.before", spawn(agent, naming))).rejects.toThrow(/FO-5/)
+      await expect(fake.fire.tool("execute.before", spawn(agent, "Work on proj-a2c"))).rejects.toThrow(/FO-5/)
+    await cleanup()
+  })
+
+  test("allows a coder spawn naming an implementer bead", async () => {
+    const { fake, cleanup } = await start(project(), implementerBeads)
+    await fake.fire.tool("execute.before", spawn("coder", naming))
     await cleanup()
   })
 
