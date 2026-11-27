@@ -147,11 +147,13 @@ One committed test vector holds a manifest, its RFC 8785 canonical bytes and its
 computes the profile digest reproduces both exactly. The vector covers:
 
 - key order, at the top level and in nested objects;
-- string escaping: a quote, a backslash and a control character;
+- string escaping: a quote, a backslash, a control character with a short form (`\b`), one without (U+001F),
+  a `/`, and DEL (U+007F), which stays literal;
 - both integer bounds, `9007199254740992` and `-9007199254740992`;
 - the end of the output: the bytes end at the closing brace, with no trailing newline.
 
-Add refusal cases for the generator: a float, a non-ASCII string, and an integer one past each bound.
+Add refusal cases for the generator: a float, a non-ASCII string, a non-ASCII key, and an integer one past each
+bound.
 
 ### Standalone expressions
 

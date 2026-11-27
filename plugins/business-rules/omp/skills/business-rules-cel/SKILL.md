@@ -58,19 +58,34 @@ TypeSpec (*.tsp)
    protobuf bytes or of the environment YAML. RFC 8785 is normative: the canonical bytes are the ones it defines,
    whatever encoder an adapter uses. The generator refuses a manifest with any of these:
    - a float;
-   - a non-ASCII string;
+   - a non-ASCII string, as a value or as a key;
    - an integer `n` with |n| > 2^53, in either sign.
 
    The bound keeps every integer exact as a double. Without the negative bound, a decoder that reads JSON
    numbers as doubles rounds `-9007199254740993` while another keeps it, and the two digests differ. For this
-   subset, JCS is sorted keys with no whitespace, and these encoders can write it:
-   - Python: `json.dumps(sort_keys=True, separators=(",", ":"))`;
-   - Go: `encoding/json` with HTML escaping off, over a type whose keys sort;
+   subset, RFC 8785 output is:
+   - the members of every object sorted by key, compared as UTF-16 code units, which for ASCII keys is byte
+     order;
+   - no whitespace;
+   - integers in plain decimal;
+   - in strings, `"` and `\` escaped with a backslash, `\b`, `\t`, `\n`, `\f` and `\r` in their short forms,
+     any other character below U+0020 as `\u00xx` in lowercase hex, and every other character literal,
+     including `/` and DEL (U+007F).
+
+   These encoders can write it:
+   - Python: `json.dumps(manifest, ensure_ascii=False, separators=(",", ":"), sort_keys=True)`, encoded as
+     UTF-8. The default `ensure_ascii=True` writes DEL as `\u007f`, and RFC 8785 leaves it literal. `sort_keys`
+     compares code points, which gives the RFC 8785 order only for ASCII keys, so keep the generator's refusal
+     of non-ASCII keys;
+   - Go 1.22 or later: `encoding/json` through a `json.Encoder` with `SetEscapeHTML(false)`, over maps, whose
+     keys it sorts. Earlier releases write `\b` and `\f` as `\u0008` and `\u000c`;
    - Rust: `serde_json` without `preserve_order`;
-   - TypeScript: a `JSON.stringify` that sorts keys.
+   - TypeScript: a serializer that writes each object's members in sorted order itself. `JSON.stringify` writes
+     integer-like keys such as `"9"` and `"10"` first, in numeric order, whatever order they were inserted in.
 
    A candidate encoder counts only when it reproduces the cross-adapter test vector: a manifest, its canonical
-   bytes and its digest. The vector covers key order, escaping, both integer bounds and the end of the output.
+   bytes and its digest. The vector covers key order, escaping (DEL included), both integer bounds and the end
+   of the output.
    The canonical bytes end at the closing brace, with no trailing newline, although some encoders append one
    (Go's `json.Encoder.Encode` does).
 6. **Descriptor-set bytes.** Before it builds an environment, every adapter hashes the descriptor-set bytes it
