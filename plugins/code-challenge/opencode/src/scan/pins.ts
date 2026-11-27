@@ -2,7 +2,7 @@
 // in renovate.json that reads this file; keep each pin on the line after its annotation.
 export const PINS: Record<string, string> = {
   // renovate: datasource=npm depName=@biomejs/biome
-  "@biomejs/biome": "2.6.8",
+  "@biomejs/biome": "2.6.9",
   // renovate: datasource=npm depName=oxlint
   oxlint: "1.94.0",
   // renovate: datasource=npm depName=knip
