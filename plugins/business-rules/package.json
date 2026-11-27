@@ -1,0 +1,24 @@
+{
+  "name": "business-rules",
+  "version": "0.0.0",
+  "description": "Business rules and CEL: when to use CEL, the CEL adoption standard, rule tests, the rules CI gate, and CEL authoring skills adapted from cel-expr/skills.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Business rules and CEL: when to use CEL, the CEL adoption standard, rule tests, the rules CI gate, and CEL authoring skills adapted from cel-expr/skills.",
+    "category": "development",
+    "harnesses": [
+      "opencode",
+      "claude",
+      "omp",
+      "pi"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    },
+    "claude": {
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/business-rules"
+    }
+  }
+}

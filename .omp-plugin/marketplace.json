@@ -51,6 +51,13 @@
       "category": "development"
     },
     {
+      "name": "business-rules",
+      "description": "Business rules and CEL: when to use CEL, the CEL adoption standard, rule tests, the rules CI gate, and CEL authoring skills adapted from cel-expr/skills.",
+      "source": "./plugins/business-rules/omp",
+      "version": "0.0.0",
+      "category": "development"
+    },
+    {
       "name": "code-challenge",
       "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
       "source": "./plugins/code-challenge/omp",

@@ -1,0 +1,12 @@
+{
+  "name": "business-rules",
+  "description": "Business rules and CEL: when to use CEL, the CEL adoption standard, rule tests, the rules CI gate, and CEL authoring skills adapted from cel-expr/skills.",
+  "version": "0.0.0",
+  "author": {
+    "name": "Sjors Robroek",
+    "url": "https://github.com/srobroek"
+  },
+  "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/business-rules",
+  "repository": "https://github.com/srobroek/harness-plugins",
+  "license": "Apache-2.0"
+}

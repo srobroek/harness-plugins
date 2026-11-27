@@ -1,0 +1,28 @@
+{
+  "name": "@srobroek/pi-business-rules",
+  "version": "0.0.0",
+  "description": "Business rules and CEL: when to use CEL, the CEL adoption standard, rule tests, the rules CI gate, and CEL authoring skills adapted from cel-expr/skills.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/business-rules/pi"
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  }
+}

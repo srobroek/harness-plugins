@@ -1,0 +1,34 @@
+# business-rules
+
+Skills for business rules: where a rule should live (a named guard in host code, CEL, or neither), and the
+standard for a project that adopts CEL.
+
+## Install
+
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-business-rules
+```
+
+OpenCode:
+
+```sh
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/business-rules/opencode'
+```
+
+Claude Code installs the same skills from this repository's marketplace:
+
+```sh
+claude plugin install business-rules@harness-plugins
+```
+
+## Skills
+
+OpenCode lists only `business-rules-guide` to the model. The other skills set `opencode/autoinvoke: false`, and
+the guide loads them by id. Claude Code ignores that metadata, so there every skill is listed.
+
+The plugin registers these skills from `skills/`, unless a skill with the same id already exists:
+
+- `business-rules-guide`: when to use CEL, when a named guard in host code is enough, and when neither fits.
+  It also says why Rego, Cedar, JSONata, JSON Logic, expr-lang and Starlark were ruled out.

@@ -54,6 +54,15 @@
       "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
+      "name": "business-rules",
+      "description": "Business rules and CEL: when to use CEL, the CEL adoption standard, rule tests, the rules CI gate, and CEL authoring skills adapted from cel-expr/skills.",
+      "source": "./plugins/business-rules/claude",
+      "version": "0.0.0",
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/business-rules",
+      "repository": "https://github.com/srobroek/harness-plugins"
+    },
+    {
       "name": "chezmoi",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
       "source": "./plugins/chezmoi/claude",
