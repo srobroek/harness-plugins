@@ -53,7 +53,7 @@ guard that reads the table.
 
 ### Check before use
 
-At load, in this order, the adapter:
+At load, in this order, an adapter under the portability profile:
 
 1. hashes the descriptor-set bytes it read, and refuses them when the SHA-256 differs from the manifest's;
 2. builds the environment from the profile manifest, and refuses an extension version outside its own inventory
@@ -62,6 +62,10 @@ At load, in this order, the adapter:
 4. checks the output type of each expression against its slot, for example `bool` for a guard;
 5. verifies each bundle: the profile digest, the checker of record, each payload's SHA-256 and each source's
    SHA-256 (`business-rules-cel`, P2).
+
+Steps 1 and 5 exist only for that profile. A native-only adapter (`business-rules-cel`, the native-only path)
+has no descriptor set and no bundle. It builds the typed environment from the generated declarations, with the
+same inventory check, checks every rule and its slot type, and then evaluates only the rules that checked.
 
 A refusal stops the load. It names the file and the command that fixes it, such as the project's rules compile
 command. Never check a rule lazily, at its first evaluation.

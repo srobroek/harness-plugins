@@ -13,7 +13,7 @@ four layers:
 1. The **general rules** (G1 to G8) apply to every project.
 2. The **protobuf portability profile** (P1 to P4) applies when rules are typed against a FileDescriptorSet and
    cross processes or languages as `CheckedExpr` messages. A project whose rules run in one engine with native
-   types can drop it.
+   types can drop it, and follows the native-only path (see The pipeline).
 3. The **engine and tooling choices** are a dated list. Replace the list when the evidence changes. The rules do
    not depend on it.
 4. The **cel-policy profile** (C1) applies only to a project that writes rule lists as cel-policy files.
@@ -23,6 +23,9 @@ Kubernetes uses CEL, both from 2026-11. Tests are in the `business-rules-testing
 the `business-rules-ci` skill.
 
 ## The pipeline
+
+This is the pipeline under the protobuf portability profile. A project that drops that profile follows the
+native-only path at the end of this section.
 
 ```text
 TypeSpec (*.tsp)
@@ -85,9 +88,8 @@ TypeSpec (*.tsp)
 
    A candidate encoder counts only when it reproduces the cross-adapter test vector: a manifest, its canonical
    bytes and its digest. The vector covers key order, escaping (DEL included), both integer bounds and the end
-   of the output.
-   The canonical bytes end at the closing brace, with no trailing newline, although some encoders append one
-   (Go's `json.Encoder.Encode` does).
+   of the output. The canonical bytes end at the closing brace, with no trailing newline, although some encoders
+   append one (Go's `json.Encoder.Encode` does).
 6. **Descriptor-set bytes.** Before it builds an environment, every adapter hashes the descriptor-set bytes it
    loaded and refuses them when the SHA-256 differs from the manifest's. The profile digest covers only the
    manifest. Without this check, a replaced descriptor set leaves the digest and every bundle check unchanged.
@@ -102,6 +104,17 @@ TypeSpec (*.tsp)
 Records enter as JSON. Validate each record against its JSON Schema first (G2). Then parse it into the declared
 message with the language's protobuf JSON parser, set to ignore unknown fields. No generated Rust or TypeScript
 structs are needed to evaluate a rule.
+
+**Native-only path.** A project whose rules run in one engine with native types keeps steps 1 and 2. Its
+generator still refuses a scope that is not structural (G7), and writes the scope's declarations, extensions
+and options from the same schemas (G6), typed with the engine's native types. It writes no descriptor set, so
+steps 5 to 9 do not apply: there is no profile digest, no `CheckedExpr` and no bundle. At load, the host:
+
+1. builds the typed environment from the generated declarations, with the pinned extensions and options (G4);
+2. checks every rule, and the output type of each slot, and collects every issue (G1);
+3. evaluates only the rules that checked.
+
+The one engine is the checker of record, and G1 to G8 still apply.
 
 ## Structural scopes
 
