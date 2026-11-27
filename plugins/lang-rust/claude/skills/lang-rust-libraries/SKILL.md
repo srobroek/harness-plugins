@@ -57,6 +57,7 @@ Checked 2026-11-16.
 | Tests | `cargo-nextest`, `proptest`, `insta` | Keep standard doctests. |
 | Integration tests | `wiremock`, `testcontainers` | Real persistence semantics, owned-boundary doubles. |
 | Security/dependencies | `cargo-deny`, `cargo-shear` | Feature/target-aware review, not a safety certificate. |
+| Rules or expressions | `cel-core` `= 0.5.1` | Evaluates CEL rules that the reference checker checked; its own checker is diagnostic, and the `cel` crate has no checker. Standard, tests and CI: the `business-rules` plugin (`business-rules-guide`). |
 
 ## References
 

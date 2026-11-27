@@ -58,6 +58,7 @@ Checked 2026-11-16.
 | Concurrency | `asyncio` task groups; `anyio` `>= 4` | Own tasks and propagate cancellation |
 | Time/IDs | `datetime`, `zoneinfo`, `uuid` | UUIDv7 on Python `3.14` or later |
 | Feature flags | `openfeature-sdk` `>= 0.10` | Provider-independent evaluation; safe fallback |
+| Rules or expressions | `cel-expr-python` `== 0.1.4` | CEL with a checker, over cel-cpp; pin exactly. `common-expression-language` has no checker. Standard, tests and CI: the `business-rules` plugin (`business-rules-guide`) |
 
 ## References
 

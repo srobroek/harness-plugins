@@ -63,6 +63,7 @@ Checked 2026-11-16.
 | Password hashing | `@node-rs/argon2` `>= 2` | Bun native password APIs when intentionally Bun-only. |
 | Feature flags | `@openfeature/server-sdk` `>= 1` | Inject a provider and define outage defaults. |
 | Build and quality | `typescript` `>= 7`; `@biomejs/biome` `>= 2` for lint and format | ESLint only for named gaps; `tsdown` `>= 0.23` for new libraries; no bundled type-check assumption. Tables: [quality.md](references/quality.md). |
+| Rules or expressions | `@bufbuild/cel` `0.6.2` | Evaluates CEL bundles that the reference checker checked, in a profile with no optional or bindings extension; it has no public checker. Standard, tests and CI: the `business-rules` plugin (`business-rules-guide`). |
 
 ## References
 
