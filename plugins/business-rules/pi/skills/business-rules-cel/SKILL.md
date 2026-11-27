@@ -189,8 +189,10 @@ So:
   - the presence cases, run through the activation path (parse a record, then evaluate);
   - the tampered-bundle cases, refused by the host's verifier;
   - every `CheckedExpr` that a checker of record shipped, evaluated to its expected value.
-- Every checker of record checks every rule and standalone expression that the project ships. Fail CI when two
-  of them disagree on whether it checks, or on its output type.
+- Every checker of record checks every standalone expression that the project ships. Fail CI when two of them
+  disagree on whether it checks, or on its output type.
+- A policy file (`.celpolicy`) is compiled only by the policy-capable reference checker (cel-go). Every other
+  engine evaluates the `CheckedExpr` that it wrote, as a shipped case, and never parses the policy file.
 - Run cel-spec's simple tests on every engine against a committed failure baseline. Fail on a missing engine, a
   new failure or a new pass. The scores are diagnostic data about the subset that ran. An evaluator's own
   checker results are diagnostic too.
@@ -311,8 +313,9 @@ identity()                      -> {engine, version, options}
 An engine's role decides what its results can prove.
 
 - **Checker of record.** Its check decides whether a rule ships. The reference checker (cel-go) checks rule lists
-  and every rule that ships across a boundary. A host that checks standalone expressions at load (cel-expr-python
-  in a Python host) is a second checker of record.
+  and every rule that ships across a boundary, and it alone compiles policy files. A host that checks standalone
+  expressions at load (cel-expr-python in a Python host) is a second checker of record for those expressions
+  only.
 - **Evaluator.** It runs only `CheckedExpr` messages that a checker of record wrote in the same profile, after the
   bundle check. Its own checker, if it has one, is diagnostic.
 - **Source-checking alternative.** It checks and evaluates source, but cannot read or write a `CheckedExpr`. It

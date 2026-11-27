@@ -17,7 +17,7 @@ This skill lays out the CI jobs that enforce the `business-rules-cel` standard. 
 | --- | --- | --- | --- |
 | `environment` | Regenerate the descriptor set, the profile manifests and the environment files from the published JSON Schemas | `git status --porcelain -- <generated dirs>` is not empty, or the generator refuses a scope | G6, G7 |
 | `check` | The reference checker over every rule file, then build the bundle and verify its digests | A descriptor set that does not match its manifest, any issue (printed as `file:line:col: message`), a wrong output type for a slot, a refused policy feature, or a digest that does not match | G1, P2, C1 |
-| `engines` | The supported-profile suite on each selected engine, one matrix cell per engine, against the bundle from `check`, including the JCS vector | A case of the engine's role fails, the adapter does not reproduce the JCS vector, or the two checkers of record disagree | G3 |
+| `engines` | The supported-profile suite on each selected engine, one matrix cell per engine, against the bundle from `check`, including the JCS vector | A case of the engine's role fails, the adapter does not reproduce the JCS vector, or the two checkers of record disagree on a standalone expression | G3 |
 | `conformance` | cel-spec's simple tests on every engine, compared with the committed failure baseline | An engine has no results, or its failure set changed | G3, G4 |
 | `authoring-tests` | `cel-expr eval -tests` over the typed test cases, with a verified `cel-expr` release | A case fails, or coverage is below the project's threshold | G8 (the CLI reads the generated environment) |
 | `ci-gate` | The one required check, over every job above | Any job failed | |
@@ -41,7 +41,9 @@ Notes on each job:
   When the project commits the bundle, this check fails on a stale or missing entry, and the error names the
   command that rebuilds it. When CI builds the bundle, upload it as an artifact for the `engines` job.
 - **engines.** Each engine reads the same case files and the same bundle. The suite runs on every engine the
-  project selected, each in its own cell, so a missing engine shows as a failed job.
+  project selected, each in its own cell, so a missing engine shows as a failed job. Only the standalone
+  expressions go through both checkers of record. A policy file is compiled once, by the reference checker in
+  `check`, and the engines evaluate its `CheckedExpr` from the bundle.
 - **conformance.** The scores are diagnostic. The job fails only on a missing engine or a changed failure set.
   Update the baseline on purpose, in its own commit, with the reason.
 - **cost.** When the project reports cel-go's static cost estimate, print it in the `check` job and label it an

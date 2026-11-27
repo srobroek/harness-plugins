@@ -68,7 +68,9 @@ Each engine runs the case kinds of its role. All of them are required in CI (G3)
 
 - Values must match exactly. Compare results as `cel.expr.Value` protobuf JSON, with one comparator for every
   language (P3).
-- Fail CI when two checkers of record disagree on whether a shipped rule checks, or on its output type.
+- Fail CI when two checkers of record disagree on whether a standalone expression checks, or on its output type.
+- A policy file is compiled only by the policy-capable reference checker (cel-go). Every other engine evaluates
+  the `CheckedExpr` that it wrote, as a `shipped` case, and never parses the policy file.
 - Run cel-spec's simple tests on every engine against a committed failure baseline. A missing engine fails the
   run. A new failure and a new pass both fail it too, so an upgrade that changes behavior gets reviewed and the
   baseline is updated on purpose. The scores themselves are diagnostic: they say how much of cel-spec an engine
@@ -159,12 +161,13 @@ When config files hold expressions (`business-rules-cel`, `formats.md`):
   column in the file;
 - an expression whose output type differs from its slot is refused, for example an `int` where a guard needs a
   `bool`;
-- both checkers of record agree on whether each shipped expression checks, and on its output type;
+- both checkers of record agree on whether each standalone expression checks, and on its output type;
 - a YAML fixture with a duplicate key, and one with an unquoted `!has(...)`, fail at load.
 
 ### Policies
 
-When the project uses cel-policy (C1):
+When the project uses cel-policy (C1), only the reference checker compiles the policy files. The other engines
+run the compiled `CheckedExpr`:
 
 - one refusal fixture per excluded feature: `variables`, `aggregate`, a nested `rule`, `explanation` and
   `imports`;
