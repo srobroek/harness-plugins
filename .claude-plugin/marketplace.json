@@ -75,7 +75,7 @@
       "name": "design",
       "description": "UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.",
       "source": "./plugins/design/claude",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/design",
       "repository": "https://github.com/srobroek/harness-plugins"

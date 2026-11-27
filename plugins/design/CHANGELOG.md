@@ -1,3 +1,9 @@
+## design [0.11.1](https://github.com/srobroek/harness-plugins/compare/design--v0.11.0...design--v0.11.1) (2026-11-27)
+
+### Bug Fixes
+
+* **design:** product and docs-page copy describes the product from its docs ([2f2d724](https://github.com/srobroek/harness-plugins/commit/2f2d72403fac9e06846439423ec5a6a83bc7cb49))
+
 ## design [0.11.0](https://github.com/srobroek/harness-plugins/compare/design--v0.10.4...design--v0.11.0) (2026-11-25)
 
 ### Features
