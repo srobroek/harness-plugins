@@ -17,8 +17,9 @@ Changes made in srobroek/harness-plugins, 2026-11:
 - Removed the protoc descriptor-set alias, -proto_db, and the advice on protoTypes, imports and enum variables.
 - Replaced "go install ...@latest" with an install from a verified release.
 - Removed the advice to prefer namespaced variables of simple types over a map; scopes are message-typed.
-- Restricted the policy section to the supported policy profile: one flat match block, an unconditional final
-  choice, no variables. Noted that the v0.4.0 release has no -format=policy.
+- Restricted the policy section to the supported policy profile: one flat match block, a condition on every
+  choice but the final one, an unconditional final choice, no variables, aggregate, nested rule, explanation or
+  imports, and outputs of the slot type. Noted that the v0.4.0 release has no -format=policy.
 - Added the steps that run the project's reference checker and add the cases to the project's suite.
 - Removed skippedTestCases, which the v0.4.0 release does not have.
 - Left out the upstream examples and references, which hand-write environments.

@@ -770,7 +770,7 @@
     {
       "name": "business-rules",
       "version": "0.0.0",
-      "description": "Business rules and CEL: when to use CEL, the CEL adoption standard, rule tests, the rules CI gate, and CEL authoring skills adapted from cel-expr/skills.",
+      "description": "Business rules for any project: where the logic lives, host-code guards and adapters, the CEL adoption standard, rule tests, the rules CI gate, and CEL authoring skills adapted from cel-expr/skills.",
       "category": "development",
       "harnesses": {
         "opencode": {

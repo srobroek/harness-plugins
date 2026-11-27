@@ -107,10 +107,13 @@ Then:
 
 Write a rule list in the supported policy profile (`business-rules-cel`, rule C1):
 
-- one flat first-match `match` block: `rule.match` choices evaluate in order, and the first match wins;
-- no `aggregate`, no nested `rule`, and no `variables`;
-- an unconditional final choice whose output the rule list's schema reserves for "no match", such as
-  `- output: '"unknown"'`. Without it, the composed policy returns an optional value, which the profile excludes.
+- a `name`, and a `rule` with one `match` block: the choices evaluate in order, and the first match wins;
+- every choice has an `output`, and every choice except the final one has a `condition`;
+- no `variables`, no `aggregate`, no nested `rule`, no `explanation` and no `imports`;
+- a final choice with no condition, whose output the rule list's schema reserves for "no match", such as
+  `- output: '"unknown"'`. Without it, the composed policy returns an optional value, which the profile excludes;
+- outputs of the slot type that the rule-list contract declares for the list's kind. The reference checker
+  refuses a list whose result type differs.
 
 The `cel-expr` `v0.4.0` release has no `-format=policy`. Until a verified release has it, compile the policy with
 the project's reference checker, and run its test cases through the project's suite. With a verified release that
