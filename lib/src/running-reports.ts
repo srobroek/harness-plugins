@@ -257,8 +257,11 @@ export function reportBlock(
   for (const report of reports) {
     if (!reportLive(report, clock) || report.jobs.length === 0) continue
     const ours = sameServer(report, clock)
-    if (ours && lookup(report.sessionID)?.state === "missing") continue
+    // A report of this server whose own session the host no longer has holds nothing, except for its ended jobs: the host
+    // marks a job cancelled before its shell exits, so an ended job may still be stopping whatever became of its session.
+    const sessionGone = ours && lookup(report.sessionID)?.state === "missing"
     for (const job of report.jobs) {
+      if (sessionGone && job.endedAt === undefined) continue
       if (namesWorktree(job.command, forms)) return `session ${report.sessionID} has a ${job.kind} running that names the worktree`
       if (job.cwd !== undefined) {
         if (within(canonical(job.cwd), forms)) return `session ${report.sessionID} has a ${job.kind} running in the worktree`
@@ -271,6 +274,7 @@ export function reportBlock(
         if (found === undefined) return `session ${report.sessionID} reported work in session ${id}, which has not been looked up`
         if (found.state === "unknown") return `session ${report.sessionID} reported work in session ${id}, whose location could not be read`
         if (found.state === "missing") {
+          if (ours && job.endedAt !== undefined) return `session ${report.sessionID} has a ${job.kind} that ended and may still be stopping, in session ${id}, which the host no longer has`
           if (ours) continue
           return `session ${report.sessionID} (another server) reported work in session ${id}, which this server cannot place`
         }

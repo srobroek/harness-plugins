@@ -278,6 +278,8 @@ export type PendingDeps = {
   lock?: Partial<LockOptions>
   /** How long the idle hook waits for one session's location; a lookup that takes longer may match any worktree. */
   sessionLookupMs?: number
+  /** Test seam: replaces the one-shot, unref'd timer that clears ended jobs when their grace window is over. Returns its cancel. */
+  graceTimer?: (run: () => void | Promise<void>, ms: number) => () => void
   /** How long the idle hook waits for the pass it starts (default {@link IDLE_PASS_MS}); the pass goes on without it. */
   idlePassMs?: number
   /** How long disposal waits for the passes still running (default {@link DISPOSE_WAIT_MS}). */
@@ -357,6 +359,8 @@ export function createPendingCleanup(deps: PendingDeps) {
    * Only this activation's own snapshots feed it.
    */
   const reported = new Map<string, ReportJob[]>()
+  /** One timer per session, for the earliest end of an ended job's grace window; cancelled when it is replaced and at disposal. */
+  const graceTimers = new Map<string, () => void>()
   /** The latest generation each live session's report has had here: a deletion's token is compared with it. */
   const lastGen = new Map<string, number>()
   /** Sessions whose stored snapshot is being written again; one retry at a time per session. */
@@ -1404,16 +1408,51 @@ export function createPendingCleanup(deps: PendingDeps) {
     return gen
   }
 
-  /** The directory a job without one runs in, as far as its owning session says: the session's own location now. */
-  const withDirectories = async (jobs: ReportJob[]): Promise<ReportJob[]> =>
-    await Promise.all(
-      jobs.map(async (job) => {
-        const owner = job.childSessionID ?? job.sessionID
-        if (job.cwd !== undefined || job.endedAt !== undefined || owner === undefined) return job
-        const found = await sessionState(owner)
-        return found.state === "at" && typeof found.directory === "string" ? { ...job, cwd: canonicalDirectory(found.directory) } : job
-      }),
-    )
+  const startTimer = (run: () => void | Promise<void>, ms: number): (() => void) => {
+    if (deps.graceTimer !== undefined) return deps.graceTimer(run, ms)
+    const timer = setTimeout(() => void run(), ms)
+    timer.unref?.()
+    return () => clearTimeout(timer)
+  }
+
+  /**
+   * After a report with ended jobs was written, set the one timer that ends their window: nothing else need happen for
+   * the hold to lift (another session's idle hook, a pass or a check would, but none is certain to come).
+   */
+  const scheduleExpiry = (sessionID: string, jobs: ReadonlyArray<ReportJob>): void => {
+    graceTimers.get(sessionID)?.()
+    graceTimers.delete(sessionID)
+    if (disposed) return
+    const ends = jobs.flatMap((job) => (job.endedAt === undefined ? [] : [job.endedAt + GRACE_MS]))
+    if (ends.length === 0) return
+    graceTimers.set(sessionID, startTimer(() => expireGrace(sessionID), Math.max(0, Math.min(...ends) - now())))
+  }
+
+  /** The timer's work: the same retry and clear paths as the triggers, under the lease and the usual generation rules. */
+  const expireGrace = async (sessionID: string): Promise<void> => {
+    graceTimers.delete(sessionID)
+    if (disposed) return
+    const token = pendingDeletes.get(sessionID)
+    if (token !== undefined) {
+      try {
+        const done = await underStore(() => removeDeleted(sessionID, token))
+        if (done && pendingDeletes.get(sessionID) === token) pendingDeletes.delete(sessionID)
+        if (done && lastGen.get(sessionID) === token) lastGen.delete(sessionID)
+      } catch (error) {
+        console.error(`delivery: could not remove the report of deleted session ${sessionID}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      return
+    }
+    if (unsettled.has(sessionID) || retrying.has(sessionID)) return
+    retrying.add(sessionID)
+    try {
+      // The jobs still running stay as they are; the ended ones whose window is over go, and the rest keep their marks.
+      const running = (reported.get(sessionID) ?? []).filter((job) => job.endedAt === undefined)
+      await recordHolds(sessionID, beginReport(sessionID, running))
+    } finally {
+      retrying.delete(sessionID)
+    }
+  }
 
   /**
    * The idle hook's `background` list, kept as the session's one report on disk. The write is the
@@ -1449,28 +1488,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       console.error(`delivery: could not record the running work of ${sessionID}: ${why}`)
       return
     }
-    await recordDirectories(sessionID, gen, at, jobs)
-  }
-
-  /**
-   * After the report is on disk: record where each job runs (its owning session's directory now; a bounded lookup) and
-   * write the report again with it, so a report that outlives its session's move still holds its old worktree. Best
-   * effort: the report without directories already holds, judged by where the owners work when a removal asks.
-   */
-  const recordDirectories = async (sessionID: string, gen: number, at: number, jobs: ReportJob[]): Promise<void> => {
-    if (jobs.length === 0) return
-    try {
-      const withCwd = await withDirectories(jobs)
-      if (withCwd.every((job, index) => job === jobs[index])) return
-      await underStore(() => {
-        // Only while this is still the session's current snapshot and the session was not deleted meanwhile.
-        if (lastGen.get(sessionID) !== gen || unsettled.has(sessionID) || pendingDeletes.has(sessionID)) return
-        writeReport(receiptDirectory(env), { sessionID, jobs: withCwd, at, pid: process.pid, host: hostname(), instance: activation, gen })
-        reported.set(sessionID, withCwd)
-      })
-    } catch (error) {
-      console.error(`delivery: could not record where the running work of ${sessionID} runs: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    scheduleExpiry(sessionID, jobs)
   }
 
   /**
@@ -1536,10 +1554,13 @@ export function createPendingCleanup(deps: PendingDeps) {
     const jobs = before.map((job): ReportJob => (job.endedAt === undefined ? { ...job, endedAt: t } : job))
     if (jobs.some((job) => t - (job.endedAt ?? t) < GRACE_MS)) {
       if (jobs.some((job, index) => job !== before[index])) writeReport(root, { sessionID, jobs, at: stamp(), pid: process.pid, host: hostname(), instance: activation, gen: token })
+      scheduleExpiry(sessionID, jobs)
       return false
     }
     removeReport(root, sessionID, activation, token)
     reported.delete(sessionID)
+    graceTimers.get(sessionID)?.()
+    graceTimers.delete(sessionID)
     return true
   }
 
@@ -1600,6 +1621,8 @@ export function createPendingCleanup(deps: PendingDeps) {
       watching?.stop()
       for (const timer of timers.values()) clearTimeout(timer)
       timers.clear()
+      for (const cancel of graceTimers.values()) cancel()
+      graceTimers.clear()
       for (const registration of registrations.reverse()) await registration.dispose()
       await boundedBy(chain, deps.disposeWaitMs ?? DISPOSE_WAIT_MS)
     })())

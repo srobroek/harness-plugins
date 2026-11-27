@@ -258,6 +258,19 @@ describe("what a removal needs, and what a report blocks", () => {
     expect(neededLookups([stored("ses_gone", undefined, { instance: "box:99:b" })], forms, clock(1_500, { alive: () => false }))).toEqual([])
   })
 
+  test("a report of this server whose session the host no longer has is skipped, except for the jobs that ended: they may still be stopping", () => {
+    const missing = { ses_a: { state: "missing" } as JobLookup }
+    const lookup = (id: string) => missing[id as keyof typeof missing]
+    const running: ReportJob[] = [{ kind: "shell", command: "cd /w/linked && make" }]
+    const ended: ReportJob[] = [{ kind: "shell", command: "cd /w/linked && make", endedAt: 1_400 }]
+    const hold = (jobs: ReportJob[]) => reportBlock([stored("ses_a", jobs)], ["/w/linked"], lookup, clock(), identity)
+    expect(hold(running)).toBeUndefined()
+    expect(hold(ended)).toContain("names the worktree")
+    // An ended job that names nothing and records no directory is unplaced: with its session gone it holds.
+    expect(hold([{ kind: "shell", sessionID: "ses_a", command: "sleep 9", endedAt: 1_400 }])).toContain("ended")
+    expect(hold([{ kind: "shell", sessionID: "ses_a", command: "sleep 9" }])).toBeUndefined()
+  })
+
   test("a job that records its cwd is judged by it alone: no lookup, and it holds only inside the worktree", () => {
     const inside = [stored("ses_a", [{ kind: "shell", sessionID: "ses_x", cwd: "/real/w/linked/sub" }])]
     const outside = [stored("ses_a", [{ kind: "shell", sessionID: "ses_x", cwd: "/elsewhere" }])]
