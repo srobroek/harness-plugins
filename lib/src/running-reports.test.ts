@@ -132,6 +132,11 @@ describe("writing and clearing: one file per session and instance", () => {
     expect(read.reports.map((r) => `${r.sessionID}/${r.instance}`).sort()).toEqual([`ses_a/${INSTANCE_A}`, `ses_a/${INSTANCE_B}`, `ses_other/${INSTANCE_B}`])
     const holds = (reports: typeof read.reports) => v1ReportBlock(reports, ["/w/linked"], () => undefined, clock(), identity)
     expect(holds(read.reports)).toContain("names the worktree")
+    // A job that ended (the writer's grace window) is still a job to this reader: it holds, and ignores the extra field.
+    writeReport(root, by(INSTANCE_A, "ses_ended", 1, [{ kind: "shell", command: "cd /w/ended && make", endedAt: 1_400 }]))
+    const withEnded = v1ReadReports(root)
+    expect(withEnded.unreadable).toBe(false)
+    expect(v1ReportBlock(withEnded.reports.filter((r) => r.sessionID === "ses_ended"), ["/w/ended"], () => undefined, clock(), identity)).toContain("names the worktree")
     // Each instance's report holds on its own: with only one of the two, the worktree is still held.
     for (const instance of [INSTANCE_A, INSTANCE_B]) expect(holds(read.reports.filter((r) => r.instance === instance && r.sessionID === "ses_a"))).toContain("names the worktree")
   })

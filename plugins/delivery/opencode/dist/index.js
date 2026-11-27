@@ -6822,6 +6822,19 @@ function createPendingCleanup(deps) {
   const pendingDeletes = new Map;
   const reported = new Map;
   const graceTimers = new Map;
+  const backoffMs = (failures) => Math.min(30000, 1000 * 2 ** (failures - 1));
+  const mono = deps.monotonic ?? (() => performance.now());
+  const endedMono = new Map;
+  const endKey = (sessionID, job) => `${sessionID}\x00${jobKey(job)}`;
+  const endedFor = (sessionID, job) => {
+    const marked = endedMono.get(endKey(sessionID, job));
+    return marked === undefined ? now() - (job.endedAt ?? now()) : mono() - marked;
+  };
+  const forgetEnds = (sessionID) => {
+    for (const key of [...endedMono.keys()])
+      if (key.startsWith(`${sessionID}\x00`))
+        endedMono.delete(key);
+  };
   const lastGen = new Map;
   const retrying = new Set;
   const retryOn = (trigger) => (deps.retryAt ?? ["pass", "check", "idle"]).includes(trigger);
@@ -7624,7 +7637,20 @@ function createPendingCleanup(deps) {
       ...typeof job.cwd === "string" ? { cwd: canonicalDirectory(job.cwd) } : {}
     }));
     const present = new Set(current.map(jobKey));
-    const kept = (reported.get(sessionID) ?? []).filter((job) => !present.has(jobKey(job))).map((job) => job.endedAt === undefined ? { ...job, endedAt: at } : job).filter((job) => at - (job.endedAt ?? at) < GRACE_MS);
+    const kept = [];
+    for (const job of reported.get(sessionID) ?? []) {
+      if (present.has(jobKey(job))) {
+        endedMono.delete(endKey(sessionID, job));
+        continue;
+      }
+      const ended = job.endedAt === undefined ? { ...job, endedAt: at } : job;
+      if (job.endedAt === undefined)
+        endedMono.set(endKey(sessionID, ended), mono());
+      if (endedFor(sessionID, ended) < GRACE_MS)
+        kept.push(ended);
+      else
+        endedMono.delete(endKey(sessionID, ended));
+    }
     const jobs = [...current, ...kept];
     if (jobs.length === 0)
       reported.delete(sessionID);
@@ -7646,12 +7672,17 @@ function createPendingCleanup(deps) {
     graceTimers.delete(sessionID);
     if (disposed)
       return;
-    const ends = jobs.flatMap((job) => job.endedAt === undefined ? [] : [job.endedAt + GRACE_MS]);
-    if (ends.length === 0)
+    const left = jobs.flatMap((job) => job.endedAt === undefined ? [] : [GRACE_MS - endedFor(sessionID, job)]);
+    if (left.length === 0)
       return;
-    graceTimers.set(sessionID, startTimer(() => expireGrace(sessionID), Math.max(0, Math.min(...ends) - now())));
+    graceTimers.set(sessionID, startTimer(() => expireGrace(sessionID), Math.max(0, Math.min(...left))));
   };
-  const expireGrace = async (sessionID) => {
+  const rearmExpiry = (sessionID, attempt) => {
+    if (disposed || graceTimers.has(sessionID))
+      return;
+    graceTimers.set(sessionID, startTimer(() => expireGrace(sessionID, attempt), backoffMs(attempt)));
+  };
+  const expireGrace = async (sessionID, attempt = 0) => {
     graceTimers.delete(sessionID);
     if (disposed)
       return;
@@ -7659,40 +7690,57 @@ function createPendingCleanup(deps) {
     if (token !== undefined) {
       try {
         const done = await underStore(() => removeDeleted(sessionID, token));
+        settleDelete(sessionID);
         if (done && pendingDeletes.get(sessionID) === token)
           pendingDeletes.delete(sessionID);
         if (done && lastGen.get(sessionID) === token)
           lastGen.delete(sessionID);
       } catch (error) {
         console.error(`delivery: could not remove the report of deleted session ${sessionID}: ${error instanceof Error ? error.message : String(error)}`);
+        if (pendingDeletes.get(sessionID) === token)
+          rearmExpiry(sessionID, attempt + 1);
       }
       return;
     }
-    if (unsettled.has(sessionID) || retrying.has(sessionID))
+    const entry = unsettled.get(sessionID);
+    if (entry !== undefined && !entry.failed || retrying.has(sessionID))
       return;
     retrying.add(sessionID);
     try {
-      const running = (reported.get(sessionID) ?? []).filter((job) => job.endedAt === undefined);
-      await recordHolds(sessionID, beginReport(sessionID, running));
+      let gen;
+      if (entry === undefined) {
+        gen = beginReport(sessionID, (reported.get(sessionID) ?? []).filter((job) => job.endedAt === undefined));
+      } else {
+        gen = entry.gen;
+        entry.failed = false;
+        entry.reason = "its report is being written again";
+      }
+      await recordHolds(sessionID, gen);
+      const after = unsettled.get(sessionID);
+      if (after !== undefined && after.gen === gen && after.failed)
+        rearmExpiry(sessionID, attempt + 1);
     } finally {
       retrying.delete(sessionID);
     }
   };
   const recordHolds = async (sessionID, gen) => {
     const entry = unsettled.get(sessionID);
-    if (entry === undefined || entry.gen !== gen)
+    if (entry === undefined || entry.gen !== gen || entry.deleting === true)
       return;
     const root = receiptDirectory(env);
     const { at, jobs } = entry;
+    let committed = false;
     try {
-      await underStore(() => {
+      committed = await underStore(() => {
         if (unsettled.get(sessionID)?.gen !== gen)
-          return;
+          return false;
         if (jobs.length === 0) {
-          if (!disposed)
-            clearReport(root, sessionID, activation);
+          if (disposed)
+            return false;
+          clearReport(root, sessionID, activation);
         } else
           writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: activation, gen });
+        return true;
       });
       if (unsettled.get(sessionID)?.gen === gen)
         unsettled.delete(sessionID);
@@ -7706,17 +7754,18 @@ function createPendingCleanup(deps) {
       console.error(`delivery: could not record the running work of ${sessionID}: ${why}`);
       return;
     }
-    scheduleExpiry(sessionID, jobs);
+    if (committed)
+      scheduleExpiry(sessionID, jobs);
   };
   const retryUnsettled = async (except) => {
-    const due = [...unsettled].filter(([id, entry]) => entry.failed && id !== except && !retrying.has(id));
-    const t = now();
-    const lapsed = [...reported].filter(([id, jobs]) => id !== except && !unsettled.has(id) && !pendingDeletes.has(id) && !retrying.has(id) && jobs.length > 0 && jobs.every((job) => job.endedAt !== undefined && t - job.endedAt >= GRACE_MS)).map(([id]) => id);
+    const due = [...unsettled].filter(([id, entry]) => entry.failed && !entry.deleting && id !== except && !retrying.has(id));
+    const lapsed = [...reported].filter(([id, jobs]) => id !== except && !unsettled.has(id) && !pendingDeletes.has(id) && !retrying.has(id) && jobs.length > 0 && jobs.every((job) => job.endedAt !== undefined && endedFor(id, job) >= GRACE_MS)).map(([id]) => id);
     if (due.length === 0 && lapsed.length === 0 && pendingDeletes.size === 0 || !reportsWritable(receiptDirectory(env)))
       return;
     const deletes = [...pendingDeletes].map(async ([id, token]) => {
       try {
         const done = await underStore(() => removeDeleted(id, token));
+        settleDelete(id);
         if (done && pendingDeletes.get(id) === token)
           pendingDeletes.delete(id);
         if (done && lastGen.get(id) === token)
@@ -7754,8 +7803,14 @@ function createPendingCleanup(deps) {
     const root = receiptDirectory(env);
     const stored = readStored(reportFile(root, sessionID, activation));
     const before = stored.kind === "report" && stored.report.gen <= token ? stored.report.jobs : [];
-    const jobs = before.map((job) => job.endedAt === undefined ? { ...job, endedAt: t } : job);
-    if (jobs.some((job) => t - (job.endedAt ?? t) < GRACE_MS)) {
+    const jobs = before.map((job) => {
+      if (job.endedAt !== undefined)
+        return job;
+      const ended = { ...job, endedAt: t };
+      endedMono.set(endKey(sessionID, ended), mono());
+      return ended;
+    });
+    if (jobs.some((job) => endedFor(sessionID, job) < GRACE_MS)) {
       if (jobs.some((job, index) => job !== before[index]))
         writeReport(root, { sessionID, jobs, at: stamp(), pid: process.pid, host: hostname2(), instance: activation, gen: token });
       scheduleExpiry(sessionID, jobs);
@@ -7763,16 +7818,22 @@ function createPendingCleanup(deps) {
     }
     removeReport(root, sessionID, activation, token);
     reported.delete(sessionID);
+    forgetEnds(sessionID);
     graceTimers.get(sessionID)?.();
     graceTimers.delete(sessionID);
     return true;
   };
+  const settleDelete = (sessionID) => {
+    if (unsettled.get(sessionID)?.deleting === true)
+      unsettled.delete(sessionID);
+  };
   const forgetSession = async (sessionID) => {
-    unsettled.delete(sessionID);
+    unsettled.set(sessionID, { gen: ++generation, at: stamp(), reason: "its deletion is still being recorded", failed: false, jobs: [], deleting: true });
     const token = lastGen.get(sessionID) ?? 0;
     pendingDeletes.set(sessionID, token);
     try {
       const done = await underStore(() => removeDeleted(sessionID, token));
+      settleDelete(sessionID);
       if (done && pendingDeletes.get(sessionID) === token)
         pendingDeletes.delete(sessionID);
       if (done && lastGen.get(sessionID) === token)

@@ -101,7 +101,13 @@ afterAll(() => {
   mock.module("./cleanup.ts", () => originalCleanup)
   mock.module("./land.ts", () => originalLand)
 })
+// The plugin decides its own grace windows on the monotonic clock. A test that lets real time pass between steps would end a 10 s
+// window whenever the machine stalls, so the clock is pinned and moves only when a test moves it (`afterGrace`).
+let monotonicMs = 0
+let monotonicClock: ReturnType<typeof spyOn> | undefined
 beforeEach(() => {
+  monotonicMs = 0
+  monotonicClock = spyOn(performance, "now").mockImplementation(() => monotonicMs)
   receiptsRoot = mkdtempSync(join(tmpdir(), "clones-receipts-"))
   worktree = mkdtempSync(join(tmpdir(), "clones-worktree-"))
   cleanupCalls = []
@@ -110,6 +116,7 @@ beforeEach(() => {
   beadIds = []
 })
 afterEach(async () => {
+  monotonicClock?.mockRestore()
   for (const dispose of disposers.splice(0).reverse()) await dispose()
   removeClaim(commonB, worktree)
   rmSync(receiptsRoot, { recursive: true, force: true })
@@ -663,6 +670,8 @@ test("a report that cannot be written while the final check lists sessions refus
 
 /** Runs `work` with the clock past the grace window of a job that left the list. */
 const afterGrace = async (work: () => Promise<unknown>): Promise<void> => {
+  // Both clocks move: the monotonic one decides the plugin's own windows, the wall one is what readers see.
+  monotonicMs += GRACE_MS
   setSystemTime(new Date(Date.now() + GRACE_MS))
   try {
     await work()
