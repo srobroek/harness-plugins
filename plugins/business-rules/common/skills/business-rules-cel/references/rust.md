@@ -14,8 +14,9 @@ supported-profile suite on every bump (`business-rules-ci`).
 
 cel-core is the only pure-Rust engine with a checker and with `CheckedExpr` input and output (MIT OR Apache-2.0).
 
-- Environment: `Env::with_standard_library().with_proto_registry(Arc::new(registry))`, where the registry is a
-  `ProstProtoRegistry` over the FileDescriptorSet. Add each listed extension from the manifest, for example
+- Environment: first hash the FileDescriptorSet's bytes and refuse them when the SHA-256 differs from the
+  manifest's. Then build `Env::with_standard_library().with_proto_registry(Arc::new(registry))`, where the
+  registry is a `ProstProtoRegistry` over the FileDescriptorSet. Add each listed extension from the manifest, for example
   `with_extension(cel_core::ext::string_extension())`. The adapter maps the names by hand (about 40 lines), so
   keep its inventory explicit (G4).
 - Read a bundle entry: decode the `google.protobuf.Any`, then `CheckedExpr::decode(any.value.as_slice())`, then

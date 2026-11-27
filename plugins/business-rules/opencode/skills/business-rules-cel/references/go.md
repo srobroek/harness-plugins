@@ -17,7 +17,8 @@ only aliases. Import the `cel.dev` paths.
 ## The reference checker
 
 Write a small program, for example `celcheck`, that builds cel-go's environment from the profile manifest with
-explicit options and appends nothing:
+explicit options and appends nothing. First hash the descriptor-set bytes it read, and exit non-zero when the
+SHA-256 differs from the manifest's `descriptor_set.sha256`. Then build the environment:
 
 ```go
 conf := &env.Config{Name: m.Name, Container: m.Container}
@@ -44,6 +45,8 @@ e, err := cel.NewEnv(opts...)
   test that loads strings version 99 and expects a refusal (G4).
 - **Check.** `ast, iss := e.Compile(src)`. Print every issue with its file, line and column, and exit non-zero.
   Compare `ast.OutputType()` with the slot's type (G1).
+- **Evaluate.** `out, _, err := prg.Eval(activation)` returns a non-nil `err` when the rule fails to evaluate.
+  The adapter turns it into an `EvalError` value (`business-rules-code`).
 - **Write the CheckedExpr.** Marshal `anypb.New(cel.AstToCheckedExpr(ast))` with `proto.Marshal`, write the bytes,
   and hash those exact bytes into the bundle entry (P2). Two runs write different bytes for the same rule, so
   never compare encodings.
@@ -69,8 +72,12 @@ while the 3 enabled ones checked.
 - Parse and compile: `parsed, iss := parser.Parse(policy.ByteSource(src, path))` with a parser from
   `policy.NewParser()`, then `ast, iss := policy.Compile(e, parsed)`. The result is one checked AST for the whole
   list, written to the bundle like any other rule.
-- Refuse the excluded features before `policy.Compile` runs (C1): `aggregate`, a nested `rule`, `variables`, and
-  a `match` with no unconditional final choice. The compiler alone accepts all four.
+- Refuse the excluded features before `policy.Compile` runs (C1): `variables`, `aggregate`, a nested `rule`,
+  `explanation`, `imports`, a non-final choice with no `condition`, and a final choice with one. The compiler
+  alone accepts `aggregate`, `variables` and a `match` with no unconditional final choice.
+- After `policy.Compile`, compare `ast.OutputType()` with the slot type that the rule-list contract declares for
+  the list's kind, and refuse a list whose type differs. The compiler checks only that the choices agree with
+  each other, and a `dyn` output agrees with anything.
 - Errors carry the `.celpolicy` file, line and column.
 
 ## The cel-expr CLI
@@ -84,9 +91,11 @@ while the 3 enabled ones checked.
 | `-format policy`, `-proto_db`, `conformance` | No | Yes |
 | Typed checks with `-fds` | 6 of 6 good rules compiled, 7 of 7 bad rules rejected | The same |
 
-- **Install only a verified release.** Download the archive, `checksums.txt`, `checksums.txt.bundle` and
-  `multiple.intoto.jsonl` from the release. Verify the checksum, the cosign signature and the SLSA provenance
-  before you run the binary. `business-rules-ci` has the commands. Never install it with `go install …@latest`.
+- **Install only a verified release.** Download the archive, `checksums.txt` with its cosign signature
+  (`checksums.txt.sig` and `checksums.txt.pem`, or `checksums.txt.bundle`), and `multiple.intoto.jsonl` from the
+  release. The release workflow writes both signature forms. Verify the checksum, the cosign signature and the
+  SLSA provenance before you run the binary. `business-rules-ci` has the commands. Never install it with
+  `go install …@latest`.
 - **No policy support in the release.** `v0.4.0` has no `-format policy`. Until a signed release has it, check
   and test policies with the reference checker and the policy test cases, not with the CLI.
 - **Environment.** It reads JSON only; YAML fails with a JSON parse error. The layout is cel-go's `env.Config`,

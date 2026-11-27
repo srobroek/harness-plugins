@@ -15,8 +15,9 @@ supported-profile suite on every bump (`business-rules-ci`).
 (0.1.x): pin it with `==`.
 
 - Import: `from cel_expr_python import cel`.
-- Types come from protobuf descriptors. Load the FileDescriptorSet into a `descriptor_pool`, and declare each
-  variable as a message or a primitive.
+- Types come from protobuf descriptors. Hash the FileDescriptorSet's bytes and refuse them when the SHA-256
+  differs from the manifest's. Then load them into a `descriptor_pool`, and declare each variable as a message or
+  a primitive.
 - Build the environment from the profile manifest, not from a hand-written file:
   `cel.NewEnv(descriptor_pool=pool, config=cel.NewEnvConfigFromYaml(env_yaml))`, where `env_yaml` is the cel-go
   environment YAML that your adapter renders in memory from the manifest. It reads message-typed variables.

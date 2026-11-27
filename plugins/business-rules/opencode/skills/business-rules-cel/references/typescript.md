@@ -14,7 +14,8 @@ supported-profile suite on every bump (`business-rules-ci`).
 `@bufbuild/cel` (Apache-2.0, beta) evaluates a `CheckedExpr` with `plan(env, checkedExpr)`. It evaluated all 24
 `CheckedExpr` messages from four writers in the spike.
 
-- Environment: `createFileRegistry(fromBinary(FileDescriptorSetSchema, bytes))`, then
+- Environment: first hash the FileDescriptorSet's bytes and refuse them when the SHA-256 differs from the
+  manifest's. Then call `createFileRegistry(fromBinary(FileDescriptorSetSchema, bytes))`, then
   `celEnv({ registry, variables, funcs })`, with `objectType(desc)` for each message-typed variable. Build the
   variables from the profile manifest.
 - Activation: `fromJson(schema, record, { ignoreUnknownFields: true })`, after schema validation.
