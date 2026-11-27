@@ -1,3 +1,9 @@
+## beads [1.4.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.3.1...beads--v1.4.0) (2026-11-27)
+
+### Features
+
+* **beads:** FO-5 routing lets read-only review agents through ([#235](https://github.com/srobroek/harness-plugins/issues/235)) ([7f1da69](https://github.com/srobroek/harness-plugins/commit/7f1da69bbc12b00b1a0ca5198171a0fc8f57b92e))
+
 ## beads [1.3.1](https://github.com/srobroek/harness-plugins/compare/beads--v1.3.0...beads--v1.3.1) (2026-11-26)
 
 ### Bug Fixes
