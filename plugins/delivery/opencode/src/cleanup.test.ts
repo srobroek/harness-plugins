@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { outsideLocks, withLease } from "@srobroek/opencode-lib/lease-lock"
-import { readReports, runningDirectory, runningLeaseFile, writeReport } from "@srobroek/opencode-lib/running-reports"
+import { holdLease, outsideLocks, withLease } from "@srobroek/opencode-lib/lease-lock"
+import { blockWithoutSessionLookup, readReports, runningDirectory, runningLeaseFile, writeReport } from "@srobroek/opencode-lib/running-reports"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import {
   claimFile,
@@ -24,7 +24,7 @@ import {
 } from "@srobroek/opencode-lib/worktree-locks"
 import { CleanupDeferred, cleanupText } from "./cleanup-tool.ts"
 import { addClone, MAX_CLONES, readClones, registryFile } from "./clone-registry.ts"
-import { authorizeExplicit, createPendingCleanup, partlyRemovedText } from "./pending-cleanup.ts"
+import { authorizeExplicit, createPendingCleanup, GRACE_MS, partlyRemovedText } from "./pending-cleanup.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
 // keep three times that headroom instead of letting Bun's 5s default kill a child process mid-fixture.
@@ -3562,6 +3562,7 @@ describe("pending cleanup: one remover per worktree", () => {
       disposeWaitMs?: number
       bound?: (ms: number) => Promise<void>
       retryAt?: ReadonlyArray<"pass" | "check" | "idle">
+      graceTimer?: (run: () => void | Promise<void>, ms: number) => () => void
       /** The host's worktree registry (default: none, so git removes). */
       host?: HostWorktrees
       /** Prime the repository cache as `setupDelivery` does (default); false leaves it cold. */
@@ -3581,8 +3582,10 @@ describe("pending cleanup: one remover per worktree", () => {
         hookName === "experimental.idle" ? Promise.reject(new Error("unknown hook")) : original(hookName, callback)
     }
     let clock = NOW + 10
-    const pending = createPendingCleanup({
-      ctx: fake.context,
+    let mono = 0
+    /** One activation of the plugin over this fixture; `again` builds another, as a reload in the same process does. */
+    const make = (again: { lock?: Record<string, unknown>; disposeWaitMs?: number; ctx?: typeof fake.context } = {}) => createPendingCleanup({
+      ctx: again.ctx ?? fake.context,
       cwd: f.main,
       env: f.env,
       host: () => over.host,
@@ -3591,19 +3594,27 @@ describe("pending cleanup: one remover per worktree", () => {
       ...(over.maxPerPass === undefined ? {} : { maxPerPass: over.maxPerPass }),
       cleanup: { run: stripped(scripted.run), now: () => NOW + 10, bounds: over.bounds ?? HEAVY_FIXTURE_BOUNDS },
       now: () => clock,
+      monotonic: () => mono,
       // Reports expire on their files' real mtimes; `advance` moves this clock the same way it moves `now`.
       fileNow: () => Date.now() + (clock - (NOW + 10)),
       ...(over.observe === undefined ? {} : { observe: over.observe }),
-      ...(over.lock === undefined ? {} : { lock: over.lock }),
+      ...(again.lock ?? over.lock ? { lock: again.lock ?? over.lock } : {}),
       ...(over.sessionLookupMs === undefined ? {} : { sessionLookupMs: over.sessionLookupMs }),
       ...(over.idlePassMs === undefined ? {} : { idlePassMs: over.idlePassMs }),
-      ...(over.disposeWaitMs === undefined ? {} : { disposeWaitMs: over.disposeWaitMs }),
+      ...((again.disposeWaitMs ?? over.disposeWaitMs) === undefined ? {} : { disposeWaitMs: again.disposeWaitMs ?? over.disposeWaitMs }),
       ...(over.bound === undefined ? {} : { bound: over.bound }),
       ...(over.retryAt === undefined ? {} : { retryAt: over.retryAt }),
+      ...(over.graceTimer === undefined ? {} : { graceTimer: over.graceTimer }),
     })
+    const pending = make()
     if (over.prime !== false) await pending.prime()
     const common = (await repositoryContext(f.main))?.commonDir as string
     const advance = (ms: number) => {
+      clock += ms
+      mono += ms
+    }
+    /** The wall clock jumps (a step, a resume from sleep); the monotonic clock does not. */
+    const jump = (ms: number) => {
       clock += ms
     }
     const idle = async (sessionID = "ses_lead") => {
@@ -3616,7 +3627,13 @@ describe("pending cleanup: one remover per worktree", () => {
       await pending.dispose()
       rmSync(f.root, { recursive: true, force: true })
     }
-    return { f, options, scripted, fake, pending, common, advance, idle, claim, finish }
+    /** Another activation in this process, as OpenCode's other Locations make: its own host context, the same store. */
+    const reactivate = (again: { lock?: Record<string, unknown>; disposeWaitMs?: number } = {}) => {
+      const other = createFakeContext({ directory: f.main })
+      hostHasReporters(other, f.main)
+      return { fake: other, pending: make({ ...again, ctx: other.context }) }
+    }
+    return { f, options, scripted, fake, pending, common, advance, jump, idle, claim, finish, reactivate }
   }
   const removed = (h: Harness) => !existsSync(h.f.linked)
   const synthetic = (h: Harness) => h.fake.calls.filter((entry) => entry.method === "session.synthetic")
@@ -4366,6 +4383,7 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.pending.settle()
       expect(removed(h)).toBe(false)
       unlock(h)
+      await h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never) // the job has ended: held for the grace window
       h.advance(60_000)
       await h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never)
       await h.pending.settle()
@@ -4516,8 +4534,12 @@ describe("pending cleanup: one remover per worktree", () => {
       const answers: Record<string, () => Promise<unknown>> = {}
       session.get = (input) => (answers[input.sessionID] ?? (() => real(input)))()
       await h.pending.start()
-      const report = (child: string) =>
-        h.fake.fire.session("experimental.idle", { sessionID: "ses_x", background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: child }] } as never)
+      const report = async (child: string) => {
+        // A report of nothing, then the grace window, then the next job: the earlier job's end mark would hold the worktree otherwise.
+        await h.fake.fire.session("experimental.idle", { sessionID: "ses_x", background: [] } as never)
+        h.advance(GRACE_MS)
+        await h.fake.fire.session("experimental.idle", { sessionID: "ses_x", background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: child }] } as never)
+      }
       answers.ses_here = async () => ({ id: "ses_here", location: { directory: h.f.linked } })
       await report("ses_here")
       expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("runs in the worktree")
@@ -4660,6 +4682,9 @@ describe("pending cleanup: one remover per worktree", () => {
       await idleHook(h, [{ kind: "shell", sessionID: "ses_x", shellID: "sh1", command: `cd ${h.f.linked}` }])
       await h.pending.settle()
       expect(removed(h)).toBe(false)
+      await idleHook(h, []) // the shell has left the list: held for the grace window
+      await h.pending.settle()
+      expect(removed(h)).toBe(false)
       h.advance(60_000)
       await idleHook(h, [])
       await h.pending.settle()
@@ -4689,6 +4714,9 @@ describe("pending cleanup: one remover per worktree", () => {
       expect(reportIds(h)).toEqual(["ses_a"])
       expect(await check(h)).toContain("names the worktree")
       await reportFrom(h, "ses_a", [])
+      expect(await check(h)).toContain("names the worktree") // ended, held for the grace window
+      h.advance(GRACE_MS)
+      await reportFrom(h, "ses_a", [])
       expect(reportIds(h)).toEqual([])
       expect(await check(h)).toBeUndefined()
       await h.finish()
@@ -4700,8 +4728,12 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.pending.start()
       await Promise.all([reportFrom(h, "ses_a", [shellIn(h, "one")]), reportFrom(h, "ses_a", [shellIn(h, "two")]), reportFrom(h, "ses_a", [elsewhere("three")])])
       const reports = readReports(receiptDirectory(h.f.env)).reports
-      expect(reports.map((report) => report.jobs.map((job) => job.shellID))).toEqual([["three"]])
-      // The last one names nothing in the worktree: so the earlier ones no longer hold it.
+      expect(reports.map((report) => report.jobs.filter((job) => job.endedAt === undefined).map((job) => job.shellID))).toEqual([["three"]])
+      // The earlier jobs are ended, but held for the grace window; once it is over a later snapshot leaves only the last.
+      expect(await check(h)).toContain("names the worktree")
+      h.advance(GRACE_MS)
+      await reportFrom(h, "ses_a", [elsewhere("three")])
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.map((job) => job.shellID))).toEqual([["three"]])
       expect(await check(h)).toBeUndefined()
       await h.finish()
     })
@@ -4748,9 +4780,12 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.idle()
       expect(removed(h)).toBe(false)
       await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
-      expect(reportIds(h)).toEqual([])
+      expect(reportIds(h)).toEqual(["ses_a"]) // its shell may still be stopping: held for the grace window
+      await h.idle()
+      expect(removed(h)).toBe(false)
       h.advance(60_000)
       await h.idle()
+      expect(reportIds(h)).toEqual([])
       expect(removed(h)).toBe(true)
       await h.finish()
     })
@@ -4847,7 +4882,7 @@ describe("pending cleanup: one remover per worktree", () => {
       await newer
       queue.waits[0]?.() // ... and the older, stamped before it, comes last
       await older
-      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.map((job) => job.shellID))).toEqual([["newer"]])
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.filter((job) => job.endedAt === undefined).map((job) => job.shellID))).toEqual([["newer"]])
       await h.finish()
     })
 
@@ -5045,8 +5080,8 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    // A session's deletion forgets the failure to record its report, whether or not its file can be removed.
-    needsPermissions("a deleted session's unrecorded mark goes though its file cannot be removed", async () => {
+    // A session's deletion replaces the failure to record its report with its own mark, which stays until the end of its jobs is on disk.
+    needsPermissions("a deleted session stays a hold while its file cannot be written, and the next retry settles it", async () => {
       const h = await harness("running-deleted-unlink-fails")
       await h.pending.start()
       const directory = runningDirectory(receiptDirectory(h.f.env))
@@ -5056,10 +5091,12 @@ describe("pending cleanup: one remover per worktree", () => {
         await reportFrom(h, "ses_a", [elsewhere("again")])
         expect(h.pending.unsettledCount()).toBe(1)
         await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
-        expect(h.pending.unsettledCount()).toBe(0)
+        expect(h.pending.unsettledCount()).toBe(1) // the deletion's mark: its jobs' end is not on disk
       } finally {
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
+      await h.idle("ses_lead") // the retry writes the end of its jobs
+      expect(h.pending.unsettledCount()).toBe(0)
       await h.finish()
     })
 
@@ -5072,12 +5109,14 @@ describe("pending cleanup: one remover per worktree", () => {
         sessionID: "ses_a",
         jobs: [{ kind: "shell", sessionID: "ses_a", shellID: "sh9", command: `cd ${h.f.linked} && make` }],
         at: 1, // an earlier clock than this instance's
-        pid: process.pid,
+        pid: process.ppid, // another process: a snapshot supersedes only this process's files
         host: hostname(),
         instance: "another-server",
       })
       expect(readReports(receiptDirectory(h.f.env)).reports).toHaveLength(2)
-      await reportFrom(h, "ses_a", []) // this instance clears
+      await reportFrom(h, "ses_a", []) // this instance's job has ended
+      h.advance(GRACE_MS)
+      await reportFrom(h, "ses_a", []) // and this instance clears
       expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.instance)).toEqual(["another-server"])
       expect(await check(h)).toContain("names the worktree")
       await h.finish()
@@ -5103,6 +5142,476 @@ describe("pending cleanup: one remover per worktree", () => {
       expect(h.pending.pendingDeleteCount()).toBe(0)
       expect(reportIds(h)).toEqual(["ses_a"])
       expect(await check(h)).toContain("names the worktree")
+      await h.finish()
+    })
+
+    // The report identity is per activation of the plugin. A disposed activation's queued work does nothing, and disposal removes no report.
+    // A hold written late is harmless (it expires with the pid); a clear, an empty write or a delete after disposal could lift a hold, so they do nothing.
+    test("a non-empty write a disposed activation had queued on the lease is still published", async () => {
+      const gate = Promise.withResolvers<void>()
+      let slept = 0
+      const h = await harness("running-disposed-write", { idlePassMs: 50, disposeWaitMs: 100, lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) } })
+      await h.pending.start()
+      const lease = await holdLease(runningLeaseFile(receiptDirectory(h.f.env)), { owner: "test" })
+      if (lease.kind !== "held") throw new Error("test could not take the lease")
+      const writing = reportFrom(h, "ses_a", [shellIn(h)]) // waits on the lease, sleeping on the gate
+      while (slept < 1) await Bun.sleep(2)
+      await h.pending.dispose()
+      await lease.release()
+      gate.resolve() // the write takes the lease now, after disposal
+      await writing
+      expect(reportIds(h)).toEqual(["ses_a"])
+      await h.finish()
+    })
+
+    test("a clear a disposed activation had queued on the lease does nothing when it gets the lease", async () => {
+      const gate = Promise.withResolvers<void>()
+      let slept = 0
+      const h = await harness("running-disposed-clear", { idlePassMs: 50, disposeWaitMs: 100, lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) } })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      h.advance(GRACE_MS) // the ended job's window is over: the next snapshot clears
+      const lease = await holdLease(runningLeaseFile(receiptDirectory(h.f.env)), { owner: "test" })
+      if (lease.kind !== "held") throw new Error("test could not take the lease")
+      const clearing = reportFrom(h, "ses_a", []) // waits on the lease, sleeping on the gate
+      while (slept < 1) await Bun.sleep(2)
+      await h.pending.dispose()
+      await lease.release()
+      gate.resolve()
+      await clearing
+      expect(reportIds(h)).toEqual(["ses_a"])
+      await h.finish()
+    })
+
+    test("disposal removes no report: the work it reported may still be running", async () => {
+      const h = await harness("running-dispose-keeps")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await h.pending.dispose()
+      expect(reportIds(h)).toEqual(["ses_a"])
+      await h.finish()
+    })
+
+    test("concurrent disposals dispose each registration once", async () => {
+      const h = await harness("running-dispose-memo")
+      const session = h.fake.context.session as unknown as { hook: (name: string, callback: unknown) => Promise<{ dispose: () => Promise<void> }> }
+      const original = session.hook.bind(session)
+      let disposals = 0
+      session.hook = async (name, callback) => {
+        const registration = await original(name, callback)
+        return {
+          ...registration,
+          dispose: async () => {
+            disposals += 1
+            await registration.dispose()
+          },
+        }
+      }
+      await h.pending.start()
+      await Promise.all([h.pending.dispose(), h.pending.dispose()])
+      expect(disposals).toBe(1)
+      await h.finish()
+    })
+
+    test("starting an activation removes no report an earlier activation left", async () => {
+      const h = await harness("running-start-keeps")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      const next = h.reactivate()
+      await next.pending.start()
+      expect(reportIds(h)).toEqual(["ses_a"])
+      await next.pending.dispose()
+      await h.finish()
+    })
+
+    // No activation touches another's file, so what a session reports in one Location never lifts or replaces what it reports in another.
+    test("a second activation's empty report for a session leaves the first activation's file in place, still holding", async () => {
+      const h = await harness("running-no-supersede")
+      await h.pending.start()
+      const next = h.reactivate()
+      await next.pending.prime()
+      await next.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await next.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [] } as never)
+      expect(reportIds(h)).toEqual(["ses_a"])
+      // The refusal comes from the second activation's own cleanup, which reads its sibling's file.
+      expect(await next.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("names the worktree")
+      await next.pending.dispose()
+      await h.finish()
+    })
+
+    test("each activation's file keeps its own snapshot, and one activation's delete leaves the other's file untouched", async () => {
+      const h = await harness("running-own-files")
+      await h.pending.start()
+      const next = h.reactivate()
+      await next.pending.prime()
+      await next.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h, "sh-first")])
+      await next.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ sessionID: "ses_a", ...shellIn(h, "sh-second") }] } as never)
+      const shellIds = () => readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.map((job) => job.shellID).join(",")).sort()
+      expect(shellIds()).toEqual(["sh-first", "sh-second"])
+      expect(new Set(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.instance)).size).toBe(2)
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }) // only the first activation hears it
+      await Bun.sleep(100)
+      expect(shellIds()).toEqual(["sh-first", "sh-second"]) // the first's job is ended, held for the grace window
+      h.advance(GRACE_MS)
+      await check(h)
+      expect(shellIds()).toEqual(["sh-second"])
+      // The second activation still refuses on its own file, and the first's is gone.
+      expect(await next.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("names the worktree")
+      await next.pending.dispose()
+      await h.finish()
+    })
+
+    // A delete queued on the lease before disposal does nothing when it gets the lease: the work may still be running.
+    test("a delete a disposed activation had queued on the lease does nothing when it gets the lease", async () => {
+      const gate = Promise.withResolvers<void>()
+      let slept = 0
+      const h = await harness("running-disposed-delete", { disposeWaitMs: 100, lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) } })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      const lease = await holdLease(runningLeaseFile(receiptDirectory(h.f.env)), { owner: "test" })
+      if (lease.kind !== "held") throw new Error("test could not take the lease")
+      void h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }) // the delete waits on the lease, sleeping on the gate
+      while (slept < 1) await Bun.sleep(2)
+      await h.pending.dispose()
+      await lease.release()
+      gate.resolve() // the delete takes the lease now, after disposal
+      while (h.pending.pendingDeleteCount() !== 0) await Bun.sleep(5)
+      expect(reportIds(h)).toEqual(["ses_a"])
+      await h.finish()
+    })
+
+    // The host marks a job cancelled before its shell exits (SIGTERM, then SIGKILL after 3 s), so a job that leaves the list may still run.
+    test("an empty snapshot right after a running one still holds; after the grace window the next snapshot clears it", async () => {
+      const h = await harness("running-grace-snapshot")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      expect(reportIds(h)).toEqual(["ses_a"])
+      expect(readReports(receiptDirectory(h.f.env)).reports[0]?.jobs[0]?.endedAt).toBeDefined()
+      expect(await check(h)).toContain("names the worktree")
+      h.advance(GRACE_MS - 1)
+      await reportFrom(h, "ses_a", [])
+      expect(reportIds(h)).toEqual(["ses_a"])
+      h.advance(1)
+      await reportFrom(h, "ses_a", [])
+      expect(reportIds(h)).toEqual([])
+      expect(await check(h)).toBeUndefined()
+      await h.finish()
+    })
+
+    test("a retry, pass or check after the grace window clears the ended jobs without a new snapshot", async () => {
+      const h = await harness("running-grace-trigger", { retryAt: ["check"] })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      expect(await check(h)).toContain("names the worktree")
+      h.advance(GRACE_MS)
+      expect(await check(h)).toBeUndefined()
+      expect(reportIds(h)).toEqual([])
+      await h.finish()
+    })
+
+    test("a job that comes back in a later snapshot is running again, with no end mark", async () => {
+      const h = await harness("running-grace-return")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      expect(readReports(receiptDirectory(h.f.env)).reports[0]?.jobs).toMatchObject([{ shellID: "sh1" }])
+      expect(readReports(receiptDirectory(h.f.env)).reports[0]?.jobs[0]?.endedAt).toBeUndefined()
+      await h.finish()
+    })
+
+    test("a session deleted while its shell runs keeps its report until the grace window ends, then removes it", async () => {
+      const h = await harness("running-grace-delete", { retryAt: ["check"] })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      h.fake.sessions.delete("ses_a") // the host no longer has the session: its jobs ended, but their shells may still be stopping
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+      await Bun.sleep(100)
+      expect(reportIds(h)).toEqual(["ses_a"])
+      expect(h.pending.pendingDeleteCount()).toBe(1)
+      expect(await check(h)).toContain("names the worktree")
+      h.advance(GRACE_MS)
+      expect(await check(h)).toBeUndefined()
+      expect(reportIds(h)).toEqual([])
+      expect(h.pending.pendingDeleteCount()).toBe(0)
+      await h.finish()
+    })
+
+    // Nothing else may run when the window ends (no other idle hook, pass or check): a timer the writer sets clears the ended jobs.
+    test("with no other trigger, the writer's grace timer clears the ended jobs, so a reader with no session lookup passes", async () => {
+      const timers: Array<{ run: () => void | Promise<void>; ms: number; cancelled: boolean }> = []
+      const h = await harness("running-grace-timer", {
+        graceTimer: (run, ms) => {
+          const timer = { run, ms, cancelled: false }
+          timers.push(timer)
+          return () => {
+            timer.cancelled = true
+          }
+        },
+      })
+      await h.pending.start()
+      const asPi = () =>
+        blockWithoutSessionLookup(receiptDirectory(h.f.env), [h.f.linked], { now: Date.now(), host: hostname(), alive: (pid) => pid === process.pid }, (path) => path)
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      const live = timers.filter((timer) => !timer.cancelled)
+      expect(live).toHaveLength(1)
+      expect(live[0]?.ms).toBe(GRACE_MS)
+      expect(asPi()).toContain("names the worktree")
+      h.advance(GRACE_MS)
+      await live[0]?.run()
+      expect(reportIds(h)).toEqual([])
+      expect(asPi()).toBeUndefined()
+      await h.finish()
+    })
+
+    test("disposal cancels the grace timers", async () => {
+      const timers: Array<{ cancelled: boolean }> = []
+      const h = await harness("running-grace-timer-dispose", {
+        graceTimer: () => {
+          const timer = { cancelled: false }
+          timers.push(timer)
+          return () => {
+            timer.cancelled = true
+          }
+        },
+      })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      expect(timers.some((timer) => !timer.cancelled)).toBe(true)
+      await h.pending.dispose()
+      expect(timers.every((timer) => timer.cancelled)).toBe(true)
+      await h.finish()
+    })
+
+    const graceTimers = (flag: { max?: number } = {}) => {
+      const timers: Array<{ run: () => void | Promise<void>; ms: number; cancelled: boolean }> = []
+      void flag
+      return {
+        timers,
+        graceTimer: (run: () => void | Promise<void>, ms: number) => {
+          const timer = { run, ms, cancelled: false }
+          timers.push(timer)
+          return () => {
+            timer.cancelled = true
+          }
+        },
+        /** The timers armed after the `fired`-th one and not cancelled since. */
+        live: (fired = 0) => timers.slice(fired).filter((timer) => !timer.cancelled),
+      }
+    }
+
+    // A write that was superseded commits nothing, so it must not move the grace timer of what did commit.
+    test.each(["the newer snapshot commits first", "the older snapshot comes first"] as const)("the grace timer follows the committed state, whichever snapshot finishes first: %s", async (order) => {
+      const queue = queuedWaits()
+      const t = graceTimers()
+      const h = await harness("running-grace-timer-order", { lock: queue.lock, graceTimer: t.graceTimer })
+      await h.pending.start()
+      const holder = await takeLease(h)
+      const older = outsideLocks(() => reportFrom(h, "ses_a", [shellIn(h)])) // running
+      await queue.reached(1)
+      const newer = outsideLocks(() => reportFrom(h, "ses_a", [])) // the job has ended
+      await queue.reached(2)
+      holder.release()
+      await holder.done
+      const [first, second] = order === "the newer snapshot commits first" ? [1, 0] : [0, 1]
+      queue.waits[first]?.()
+      await (first === 1 ? newer : older)
+      queue.waits[second]?.()
+      await (second === 1 ? newer : older)
+      const live = t.live()
+      expect(live).toHaveLength(1)
+      expect(live[0]?.ms).toBe(GRACE_MS)
+      h.advance(GRACE_MS)
+      await live[0]?.run()
+      expect(reportIds(h)).toEqual([])
+      await h.finish()
+    })
+
+    // The expiry's timer is spent when it fires; if the lease cannot be taken it sets another, later, on its own.
+    test("an expiry that cannot take the lease tries again on its own, with a growing wait, and the file clears", async () => {
+      const t = graceTimers()
+      const h = await harness("running-grace-rearm", { lock: { waitMs: 0 }, graceTimer: t.graceTimer })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      h.advance(GRACE_MS)
+      const holder = await takeLease(h)
+      await t.live()[0]?.run() // the lease is busy: the write fails
+      expect(reportIds(h)).toEqual(["ses_a"])
+      const second = t.live(1)
+      expect(second).toHaveLength(1)
+      expect(second[0]?.ms).toBe(1_000)
+      await second[0]?.run() // busy still
+      const third = t.live(2)
+      expect(third).toHaveLength(1)
+      expect(third[0]?.ms).toBe(2_000)
+      holder.release()
+      await holder.done
+      await third[0]?.run()
+      expect(reportIds(h)).toEqual([])
+      expect(t.live(3)).toEqual([])
+      await h.finish()
+    })
+
+    test("disposal cancels an expiry's retry timer too", async () => {
+      const t = graceTimers()
+      const h = await harness("running-grace-rearm-dispose", { lock: { waitMs: 0 }, graceTimer: t.graceTimer })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      h.advance(GRACE_MS)
+      const holder = await takeLease(h)
+      await t.live()[0]?.run()
+      expect(t.live(1)).toHaveLength(1)
+      holder.release()
+      await holder.done
+      await h.pending.dispose()
+      expect(t.live(1)).toEqual([])
+      await h.finish()
+    })
+
+    // This activation decides expiry by elapsed monotonic time: a step of the wall clock neither ends the window early nor late.
+    test("a forward jump of the wall clock does not end a grace window early", async () => {
+      const t = graceTimers()
+      const h = await harness("running-grace-wall-jump", { graceTimer: t.graceTimer })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      h.jump(GRACE_MS * 10)
+      await reportFrom(h, "ses_a", [])
+      expect(reportIds(h)).toEqual(["ses_a"])
+      await t.live()[0]?.run() // its timer fires early too: nothing is cleared, and another is set for what is left
+      expect(reportIds(h)).toEqual(["ses_a"])
+      expect(await check(h)).toContain("names the worktree")
+      h.advance(GRACE_MS)
+      await reportFrom(h, "ses_a", [])
+      expect(reportIds(h)).toEqual([])
+      await h.finish()
+    })
+
+    // Until the deletion's end of the jobs is on disk, the session's work is unknown: the removal holds on the in-memory mark.
+    test("a removal asked while a session's deletion waits for the lease is refused, and held by the ended jobs once it commits", async () => {
+      const gate = Promise.withResolvers<void>()
+      let slept = 0
+      const h = await harness("running-delete-waits", { lock: { waitMs: 3_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) } })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      h.fake.sessions.delete("ses_a") // the host no longer has the session
+      const lease = await holdLease(runningLeaseFile(receiptDirectory(h.f.env)), { owner: "test" })
+      if (lease.kind !== "held") throw new Error("test could not take the lease")
+      void h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+      while (slept < 1) await Bun.sleep(2)
+      expect(await check(h)).toContain("could not be recorded")
+      await lease.release()
+      gate.resolve()
+      while (h.pending.unsettledCount() !== 0) await Bun.sleep(5)
+      expect(await check(h)).toContain("names the worktree")
+      await h.finish()
+    })
+
+    // A retry that was in flight when the session was deleted again must not drop the newer deletion's token.
+    needsPermissions("a delete retry that finishes after the session was deleted again leaves the newer deletion pending, then it is retried", async () => {
+      const gate = Promise.withResolvers<void>()
+      let slept = 0
+      const h = await harness("running-delete-token", { retryAt: ["check"], idlePassMs: 50, lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) } })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      const root = receiptDirectory(h.f.env)
+      const directory = runningDirectory(root)
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+        await Bun.sleep(100)
+        expect(h.pending.pendingDeleteCount()).toBe(1)
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      const lease = await holdLease(runningLeaseFile(root), { owner: "test" })
+      if (lease.kind !== "held") throw new Error("test could not take the lease")
+      const checking = check(h) // the retry of the first deletion waits for the lease, sleeping on the gate
+      while (slept < 1) await Bun.sleep(2)
+      const reused = reportFrom(h, "ses_a", [shellIn(h)]) // the session is reused
+      const failed = Promise.withResolvers<void>()
+      const original = console.error
+      console.error = (...args: unknown[]) => {
+        if (String(args[0]).includes("could not remove the report of deleted session ses_a")) failed.resolve()
+      }
+      // The store stays read-only until the assertion, so no automatic pass the reused idle hook starts can retry (and so consume) the newer token.
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        void h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }) // the new deletion fails too
+        await lease.release()
+        await failed.promise
+        console.error = original
+        gate.resolve() // now the old retry finishes
+        await checking
+        await reused
+        expect(h.pending.pendingDeleteCount()).toBe(1)
+        // The old retry wrote nothing and must not have lifted the newer deletion's hold, though the host no longer has the session.
+        expect(h.pending.unsettledCount()).toBe(1) // the newer deletion is still a hold: it is what refuses removal, whatever the host says of the session
+      } finally {
+        console.error = original
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      await check(h) // the newer token is retried: the session's job ends, held for the grace window
+      expect(h.pending.pendingDeleteCount()).toBe(1)
+      h.advance(GRACE_MS)
+      await check(h) // and now it succeeds
+      expect(h.pending.pendingDeleteCount()).toBe(0)
+      expect(reportIds(h)).toEqual([])
+      await h.finish()
+    })
+
+    // A timer that fires while a pass's retry is in flight returns; the retry then owns the timer, and a failure re-arms it.
+    needsPermissions("a timer that fires during a pass's retry is replaced when that retry fails, and the hold clears later", async () => {
+      const queue = queuedWaits()
+      const t = graceTimers()
+      const h = await harness("running-grace-pass-retry", { retryAt: ["check"], lock: queue.lock, graceTimer: t.graceTimer })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      h.advance(GRACE_MS)
+      const holder = await takeLease(h)
+      const checking = check(h) // the pass's retry waits for the lease
+      await queue.reached(1)
+      await t.live()[0]?.run() // the timer fires: a retry is in flight, so it does nothing
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        holder.release()
+        await holder.done
+        queue.waits[0]?.()
+        await checking // the retry's write fails
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      const armed = t.live(1)
+      expect(armed).toHaveLength(1)
+      await armed[0]?.run()
+      expect(reportIds(h)).toEqual([])
+      await h.finish()
+    })
+
+    // A deletion retry that changes nothing on disk leaves the timer that is already armed alone.
+    test("a deletion retry that writes nothing leaves the armed timer unchanged", async () => {
+      const t = graceTimers()
+      const h = await harness("running-delete-timer-kept", { retryAt: ["check"], graceTimer: t.graceTimer })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }) // the jobs end, held for the window
+      const armed = t.live()
+      expect(armed).toHaveLength(1)
+      h.advance(1_000)
+      await check(h) // the pass retries the deletion: nothing to write
+      expect(t.timers).toHaveLength(1)
+      expect(armed[0]?.cancelled).toBe(false)
       await h.finish()
     })
 
@@ -5161,7 +5670,7 @@ describe("pending cleanup: one remover per worktree", () => {
       queue.waits[0]?.() // the older then runs: it is not the session's current report, so it writes nothing
       await older
       // Storage is back: the pass the older hook started wrote the newer snapshot, and only that one.
-      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.map((job) => job.shellID))).toEqual([["newer"]])
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.filter((job) => job.endedAt === undefined).map((job) => job.shellID))).toEqual([["newer"]])
       expect(h.pending.unsettledCount()).toBe(0)
       await h.finish()
     })
@@ -5213,6 +5722,10 @@ describe("pending cleanup: one remover per worktree", () => {
       expect(removed(h)).toBe(false)
       await reportFrom(h, "ses_a", [])
       await h.idle()
+      expect(removed(h)).toBe(false) // ended, held for the grace window
+      h.advance(GRACE_MS)
+      await reportFrom(h, "ses_a", [])
+      await h.idle()
       expect(removed(h)).toBe(true)
       await h.finish()
     })
@@ -5238,6 +5751,10 @@ describe("pending cleanup: one remover per worktree", () => {
       const open: Array<{ ms: number; ended: boolean; end: () => void }> = []
       return {
         bound: (ms: number) => new Promise<void>((done) => open.push({ ms, ended: false, end: done })),
+        /** Waits until a bound of `ms` has been asked for. */
+        asked: async (ms: number) => {
+          while (!open.some((candidate) => candidate.ms === ms)) await Bun.sleep(2)
+        },
         /** Waits until a bound of `ms` has been asked for, then ends every such bound. */
         end: async (ms: number) => {
           while (!open.some((candidate) => candidate.ms === ms && !candidate.ended)) await Bun.sleep(2)
@@ -5280,16 +5797,7 @@ describe("pending cleanup: one remover per worktree", () => {
         // The hook returns once its bound ends, with the removal still hung.
         await bounds.end(IDLE_BOUND)
         await hook
-        // Another session's idle hook cannot take the lease: its report stays unsettled, a hold, and the hook returns.
-        const second = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))
-        await bounds.end(IDLE_BOUND)
-        await second
-        expect(h.pending.unsettledCount()).toBe(1)
-        expect(reportIds(h)).toEqual([])
-        // With that session gone nothing is unsettled, so the next removal is stopped by the lease alone.
-        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_b" } })
-        while (h.pending.unsettledCount() !== 0) await Bun.sleep(5)
-        // Another removal, of another worktree, gives up on the lease and refuses.
+        // With nothing unsettled, another removal, of another worktree, is stopped by the lease alone: it gives up and refuses.
         const other = join(h.f.root, "another worktree")
         mkdirSync(other)
         let reason: string | undefined
@@ -5302,6 +5810,12 @@ describe("pending cleanup: one remover per worktree", () => {
         })
         expect(ran).toBe(false)
         expect(reason).toContain("lease could not be taken")
+        // Another session's idle hook cannot take the lease either: its report stays unsettled, a hold, and the hook returns.
+        const second = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))
+        await bounds.end(IDLE_BOUND)
+        await second
+        expect(h.pending.unsettledCount()).toBe(1)
+        expect(reportIds(h)).toEqual([])
       } finally {
         hung.release()
         await h.finish()
@@ -5318,10 +5832,18 @@ describe("pending cleanup: one remover per worktree", () => {
         await h.pending.start()
         void outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
         await hung.removing
-        const disposing = h.pending.dispose()
-        // Disposal is still waiting for the chain until its bound ends; ending it lets disposal return with the removal hung.
+        let disposed = false
+        const disposing = h.pending.dispose().then(() => {
+          disposed = true
+        })
+        // Disposal is still waiting for the chain until its bound ends: it has asked for the bound and has not returned.
+        await bounds.asked(DISPOSE_BOUND)
+        await Bun.sleep(50)
+        expect(disposed).toBe(false)
+        // Ending the bound lets disposal return with the removal hung.
         await bounds.end(DISPOSE_BOUND)
         await disposing
+        expect(disposed).toBe(true)
         // The removal is still running, so disposal let go of nothing: its lease stays for the pid and stale rules to reclaim.
         expect(existsSync(runningLeaseFile(receiptDirectory(h.f.env)))).toBe(true)
       } finally {
@@ -5368,11 +5890,15 @@ describe("pending cleanup: one remover per worktree", () => {
         await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
         await Bun.sleep(100)
         expect(h.pending.pendingDeleteCount()).toBe(1)
-        expect(h.pending.unsettledCount()).toBe(0)
+        expect(h.pending.unsettledCount()).toBe(1) // the deletion's end of the jobs is not on disk yet: a hold of its own
       } finally {
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
       expect(reportIds(h)).toEqual(["ses_a"]) // the file still holds, which fails closed
+      await h.idle("ses_lead") // the retry ends the job, held for the grace window
+      expect(h.pending.pendingDeleteCount()).toBe(1)
+      expect(removed(h)).toBe(false)
+      h.advance(GRACE_MS)
       await h.idle("ses_lead")
       expect(h.pending.pendingDeleteCount()).toBe(0)
       expect(reportIds(h)).toEqual([])
@@ -5631,6 +6157,8 @@ describe("cleanup of another repository's landing runs against that repository",
     const fake = createFakeContext({ directory: s.main, projectID: "prj_session", sessions: over.sessions?.(f) ?? [] })
     hostHasReporters(fake, s.main)
     const hostRemoved: Array<{ projectID: string; directory: string }> = []
+    let clock = NOW + 10
+    let mono = 0
     const make = () => createPendingCleanup({
       ctx: fake.context,
       cwd: s.main,
@@ -5649,10 +6177,15 @@ describe("cleanup of another repository's landing runs against that repository",
           }),
       debounceMs: 1,
       cleanup: { run: stripped(run), now: () => NOW + 10, bounds: HEAVY_FIXTURE_BOUNDS },
-      now: () => NOW + 10,
+      now: () => clock,
+      monotonic: () => mono,
       ...(over.observe === undefined ? {} : { observe: over.observe }),
       ...(over.lock === undefined ? {} : { lock: over.lock }),
     })
+    const advance = (ms: number) => {
+      clock += ms
+      mono += ms
+    }
     const pending = make()
     await pending.prime()
     const targetCommon = (await repositoryContext(f.main))?.commonDir as string
@@ -5675,7 +6208,7 @@ describe("cleanup of another repository's landing runs against that repository",
       rmSync(f.root, { recursive: true, force: true })
       rmSync(s.root, { recursive: true, force: true })
     }
-    return { f, s, run, scripted, fake, pending, another: make, targetCommon, sessionCommon, sessionKey, explicit, idle, hostRemoved, finish }
+    return { f, s, run, scripted, fake, pending, another: make, targetCommon, sessionCommon, sessionKey, explicit, idle, hostRemoved, advance, finish }
   }
   const idleSession = (id: string, projectID: string, directory: string) => ({ id, projectID, location: { directory }, time: { updated: 1 } })
 
@@ -6003,7 +6536,11 @@ describe("cleanup of another repository's landing runs against that repository",
     // The report is kept whole, whatever could be listed when it came: nothing is removed under it.
     await h.idle()
     expect(existsSync(h.f.linked)).toBe(true)
-    // The session's own report of nothing running lifts it.
+    // The session's own report of nothing running ends the job, held for the grace window; the next one after it lifts the hold.
+    await h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] })
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(true)
+    h.advance(GRACE_MS)
     await h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] })
     await h.idle()
     expect(existsSync(h.f.linked)).toBe(false)

@@ -12,6 +12,7 @@ import { registryFile } from "./clone-registry.ts"
 import { type CliRunner, runCli } from "./forge-adapter.ts"
 import * as realLand from "./land.ts"
 import { buildReceipt, type GitRunner, type LandingReceipt, listReceipts, receiptDirectory, repositoryContext, writeReceipt } from "./landing-receipt.ts"
+import { GRACE_MS } from "./pending-cleanup.ts"
 
 // Landing needs a forge and cleanup needs a real remote; both are replaced so the test sees only how
 // the registered tools and the turn-end retry chain them across two real repositories: the session's
@@ -100,7 +101,13 @@ afterAll(() => {
   mock.module("./cleanup.ts", () => originalCleanup)
   mock.module("./land.ts", () => originalLand)
 })
+// The plugin decides its own grace windows on the monotonic clock. A test that lets real time pass between steps would end a 10 s
+// window whenever the machine stalls, so the clock is pinned and moves only when a test moves it (`afterGrace`).
+let monotonicMs = 0
+let monotonicClock: ReturnType<typeof spyOn> | undefined
 beforeEach(() => {
+  monotonicMs = 0
+  monotonicClock = spyOn(performance, "now").mockImplementation(() => monotonicMs)
   receiptsRoot = mkdtempSync(join(tmpdir(), "clones-receipts-"))
   worktree = mkdtempSync(join(tmpdir(), "clones-worktree-"))
   cleanupCalls = []
@@ -109,6 +116,7 @@ beforeEach(() => {
   beadIds = []
 })
 afterEach(async () => {
+  monotonicClock?.mockRestore()
   for (const dispose of disposers.splice(0).reverse()) await dispose()
   removeClaim(commonB, worktree)
   rmSync(receiptsRoot, { recursive: true, force: true })
@@ -292,12 +300,8 @@ test("a clone stays registered while another receipt of its repository is still 
     // ... and its cleanup is retried once the retry window has passed.
     cleanupCalls = []
     cleanupResult = REMOVED
-    setSystemTime(new Date(Date.now() + 60_000))
-    try {
-      await s.idle([])
-    } finally {
-      setSystemTime()
-    }
+    await s.idle([]) // the shell has left the list: held for the grace window
+    await afterGrace(() => s.idle([]))
     expect(cleanupCalls.map((call) => call.params.receipt)).toContain(join(directory, `${second.receiptId}.json`))
   } finally {
     rmSync(other, { recursive: true, force: true })
@@ -528,7 +532,9 @@ test("a registration that cannot be persisted stays in memory: the retry still r
     await s.idle([{ kind: "shell", shellID: "sh1", command: `tail -f ${worktree}/log` }])
     expect(readReports(receiptsRoot).reports.map((report) => report.sessionID)).toEqual(["s"])
     expect(cleanupCalls).toEqual([])
-    await s.idle([])
+    await s.idle([]) // the shell has left the list: held for the grace window
+    expect(cleanupCalls).toEqual([])
+    await afterGrace(() => s.idle([]))
     expect(cleanupCalls).toHaveLength(1)
   } finally {
     errors.mockRestore()
@@ -598,7 +604,9 @@ test("another session's report of nothing running does not lift a session's hold
   await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
   expect(cleanupCalls).toEqual([])
   expect(readReports(receiptsRoot).reports.map((report) => report.sessionID)).toEqual(["a"])
-  await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
+  await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] }) // the shell has left the list: held for the grace window
+  expect(cleanupCalls).toEqual([])
+  await afterGrace(() => s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] }))
   expect(cleanupCalls).toHaveLength(1)
 })
 
@@ -653,11 +661,24 @@ test("a report that cannot be written while the final check lists sessions refus
     expect(await (await lastCoordination()).finalCheck(worktree)).toContain("session a has a shell running that names the worktree")
     // The session's next report lifts it.
     await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
+    await afterGrace(() => s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] }))
     expect(await (await lastCoordination()).finalCheck(worktree)).toBeUndefined()
   } finally {
     errors.mockRestore()
   }
 })
+
+/** Runs `work` with the clock past the grace window of a job that left the list. */
+const afterGrace = async (work: () => Promise<unknown>): Promise<void> => {
+  // Both clocks move: the monotonic one decides the plugin's own windows, the wall one is what readers see.
+  monotonicMs += GRACE_MS
+  setSystemTime(new Date(Date.now() + GRACE_MS))
+  try {
+    await work()
+  } finally {
+    setSystemTime()
+  }
+}
 
 /** The receipt path of the session's registered landing in the target. */
 const landedReceipt = async () => {
@@ -681,6 +702,8 @@ test("a deleted session's report goes, and while it holds the log names the sess
     // Resolves once the plugin's subscription has handled it.
     await s.fake.emit({ type: "session.deleted", data: { sessionID: "a" } })
     await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
+    expect(cleanupCalls).toEqual([]) // its shell may still be stopping: held for the grace window
+    await afterGrace(() => s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] }))
     expect(cleanupCalls).toHaveLength(1)
   } finally {
     errors.mockRestore()

@@ -647,6 +647,8 @@ function parseReport(text) {
     const fields = [job.sessionID, job.childSessionID, job.shellID, job.command, job.cwd];
     if (fields.some((field) => field !== undefined && typeof field !== "string"))
       return;
+    if (job.endedAt !== undefined && (typeof job.endedAt !== "number" || !Number.isFinite(job.endedAt)))
+      return;
     const [sessionID, childSessionID, shellID, command, cwd] = fields.map(optionalString);
     jobs.push({
       kind: job.kind,
@@ -654,7 +656,8 @@ function parseReport(text) {
       ...childSessionID === undefined ? {} : { childSessionID },
       ...shellID === undefined ? {} : { shellID },
       ...command === undefined ? {} : { command },
-      ...cwd === undefined ? {} : { cwd }
+      ...cwd === undefined ? {} : { cwd },
+      ...typeof job.endedAt === "number" ? { endedAt: job.endedAt } : {}
     });
   }
   return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance, gen: raw.gen ?? 0 };
@@ -721,9 +724,10 @@ function reportBlock(reports, forms, lookup, clock, canonical) {
     if (!reportLive(report, clock) || report.jobs.length === 0)
       continue;
     const ours = sameServer(report, clock);
-    if (ours && lookup(report.sessionID)?.state === "missing")
-      continue;
+    const sessionGone = ours && lookup(report.sessionID)?.state === "missing";
     for (const job of report.jobs) {
+      if (sessionGone && job.endedAt === undefined)
+        continue;
       if (namesWorktree(job.command, forms))
         return `session ${report.sessionID} has a ${job.kind} running that names the worktree`;
       if (job.cwd !== undefined) {
@@ -741,6 +745,8 @@ function reportBlock(reports, forms, lookup, clock, canonical) {
         if (found.state === "unknown")
           return `session ${report.sessionID} reported work in session ${id}, whose location could not be read`;
         if (found.state === "missing") {
+          if (ours && job.endedAt !== undefined)
+            return `session ${report.sessionID} has a ${job.kind} that ended and may still be stopping, in session ${id}, which the host no longer has`;
           if (ours)
             continue;
           return `session ${report.sessionID} (another server) reported work in session ${id}, which this server cannot place`;

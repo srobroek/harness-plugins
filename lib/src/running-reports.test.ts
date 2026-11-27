@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   clearReport,
   type JobLookup,
-  legacyReportFile,
   MAX_REPORT_BYTES,
   neededLookups,
   parseReport,
@@ -14,7 +14,6 @@ import {
   type ReportJob,
   type RunningReport,
   readReports,
-  removeLegacyReport,
   removeReport,
   reportBlock,
   reportFile,
@@ -25,6 +24,7 @@ import {
   type StoredReport,
   writeReport,
 } from "./running-reports.ts"
+import { readReports as v1ReadReports, reportBlock as v1ReportBlock } from "./testdata/running-reports-v1.ts"
 
 let root = ""
 beforeEach(() => {
@@ -112,34 +112,33 @@ describe("writing and clearing: one file per session and instance", () => {
     expect(removeReport(root, "ses_a", INSTANCE_A, 5)).toBe("removed") // already gone
   })
 
-  test("a legacy un-suffixed file is removed only when its pid and instance are ours; any other stays", () => {
-    mkdirSync(runningDirectory(root), { recursive: true })
-    const legacy = legacyReportFile(root, "ses_a")
-    const text = JSON.stringify({ sessionID: "ses_a", jobs: [], at: 1, pid: 4242, host: "box", instance: INSTANCE_A })
-    writeFileSync(legacy, text)
-    expect(removeLegacyReport(root, "ses_a", INSTANCE_B, 4242)).toBe(false)
-    expect(removeLegacyReport(root, "ses_a", INSTANCE_A, 1)).toBe(false)
-    expect(files()).toHaveLength(1)
-    expect(removeLegacyReport(root, "ses_a", INSTANCE_A, 4242)).toBe(true)
-    expect(files()).toEqual([])
-  })
-
   test("a legacy file is read like any other report, with generation 0", () => {
     mkdirSync(runningDirectory(root), { recursive: true })
-    writeFileSync(legacyReportFile(root, "ses_a"), JSON.stringify({ sessionID: "ses_a", jobs: [{ kind: "shell", command: "cd /w/linked && make" }], at: 1, pid: 4242, host: "box", instance: "box:99:old" }))
+    writeFileSync(join(runningDirectory(root), `${createHash("sha1").update("ses_a").digest("hex")}.json`), JSON.stringify({ sessionID: "ses_a", jobs: [{ kind: "shell", command: "cd /w/linked && make" }], at: 1, pid: 4242, host: "box", instance: "box:99:old" }))
     writeReport(root, by(INSTANCE_A, "ses_a", 2, []))
     const read = readReports(root)
     expect(read.unreadable).toBe(false)
     expect(read.reports.map((r) => [r.instance, r.gen]).sort()).toEqual([[INSTANCE_A, 0], ["box:99:old", 0]])
   })
 
-  test("a reader that scans the directory for `.json` and parses each file sees every per-instance file", () => {
-    writeReport(root, by(INSTANCE_A, "ses_a", 1))
-    writeReport(root, by(INSTANCE_B, "ses_a", 1))
-    for (const name of files()) {
-      expect(name).toMatch(/^[0-9a-f]{40}\.[0-9a-f]+\.json$/)
-      expect(parseReport(readFileSync(join(runningDirectory(root), name), "utf8"))).toMatchObject({ sessionID: "ses_a" })
-    }
+  // The reader older installs still run (frozen from 3e4afbbe) against what the current writer produces.
+  test("the frozen round-1 reader reads every per-instance file and treats both reports as holding", () => {
+    const job: ReportJob[] = [{ kind: "shell", command: "cd /w/linked && make" }]
+    writeReport(root, by(INSTANCE_A, "ses_a", 1, job, 3))
+    writeReport(root, by(INSTANCE_B, "ses_a", 1, job, 1))
+    writeReport(root, by(INSTANCE_B, "ses_other", 1, [{ kind: "shell", command: "sleep 9" }]))
+    const read = v1ReadReports(root)
+    expect(read.unreadable).toBe(false)
+    expect(read.reports.map((r) => `${r.sessionID}/${r.instance}`).sort()).toEqual([`ses_a/${INSTANCE_A}`, `ses_a/${INSTANCE_B}`, `ses_other/${INSTANCE_B}`])
+    const holds = (reports: typeof read.reports) => v1ReportBlock(reports, ["/w/linked"], () => undefined, clock(), identity)
+    expect(holds(read.reports)).toContain("names the worktree")
+    // A job that ended (the writer's grace window) is still a job to this reader: it holds, and ignores the extra field.
+    writeReport(root, by(INSTANCE_A, "ses_ended", 1, [{ kind: "shell", command: "cd /w/ended && make", endedAt: 1_400 }]))
+    const withEnded = v1ReadReports(root)
+    expect(withEnded.unreadable).toBe(false)
+    expect(v1ReportBlock(withEnded.reports.filter((r) => r.sessionID === "ses_ended"), ["/w/ended"], () => undefined, clock(), identity)).toContain("names the worktree")
+    // Each instance's report holds on its own: with only one of the two, the worktree is still held.
+    for (const instance of [INSTANCE_A, INSTANCE_B]) expect(holds(read.reports.filter((r) => r.instance === instance && r.sessionID === "ses_a"))).toContain("names the worktree")
   })
 
   test("a write leaves no temporary file behind", () => {
@@ -196,6 +195,8 @@ describe("reading", () => {
     ["jobs that are not a list", { sessionID: "s", jobs: {}, at: 1, pid: 1, host: "h", instance: "i" }],
     ["a job whose command is not text", { sessionID: "s", jobs: [{ kind: "shell", command: 5 }], at: 1, pid: 1, host: "h", instance: "i" }],
     ["a job whose cwd is not text", { sessionID: "s", jobs: [{ kind: "shell", cwd: [] }], at: 1, pid: 1, host: "h", instance: "i" }],
+    ["a job whose endedAt is not a number", { sessionID: "s", jobs: [{ kind: "shell", endedAt: "soon" }], at: 1, pid: 1, host: "h", instance: "i" }],
+    ["a job whose endedAt is not finite", { sessionID: "s", jobs: [{ kind: "shell", endedAt: null }], at: 1, pid: 1, host: "h", instance: "i" }],
     ["a job that is not an object", { sessionID: "s", jobs: ["shell"], at: 1, pid: 1, host: "h", instance: "i" }],
   ])("a report with %s does not parse", (_name, raw) => {
     expect(parseReport(JSON.stringify(raw))).toBeUndefined()
@@ -206,6 +207,13 @@ describe("reading", () => {
     rmSync(runningDirectory(root), { recursive: true, force: true })
     writeFileSync(runningDirectory(root), "")
     expect(reportsWritable(root)).toBe(false)
+  })
+
+  test("a job's endedAt is kept by the writer and the parser, and changes the report's version", () => {
+    const ended: ReportJob[] = [{ kind: "shell", shellID: "sh1", command: "make", endedAt: 7 }]
+    writeReport(root, by(INSTANCE_A, "ses_a", 1, ended))
+    expect(readReports(root).reports[0]?.jobs).toEqual(ended)
+    expect(reportVersion(report("ses_a", 1, ended))).not.toBe(reportVersion(report("ses_a", 1, [{ kind: "shell", shellID: "sh1", command: "make" }])))
   })
 
   test("a report's version changes when its time or its jobs do", () => {
@@ -253,6 +261,19 @@ describe("what a removal needs, and what a report blocks", () => {
     expect(neededLookups(reports, forms, clock()).sort()).toEqual(["ses_a", "ses_x", "ses_y", "ses_z"])
     expect(neededLookups([stored("ses_gone")], forms, clock(1_500, { alive: () => false }))).toEqual(["ses_gone"])
     expect(neededLookups([stored("ses_gone", undefined, { instance: "box:99:b" })], forms, clock(1_500, { alive: () => false }))).toEqual([])
+  })
+
+  test("a report of this server whose session the host no longer has is skipped, except for the jobs that ended: they may still be stopping", () => {
+    const missing = { ses_a: { state: "missing" } as JobLookup }
+    const lookup = (id: string) => missing[id as keyof typeof missing]
+    const running: ReportJob[] = [{ kind: "shell", command: "cd /w/linked && make" }]
+    const ended: ReportJob[] = [{ kind: "shell", command: "cd /w/linked && make", endedAt: 1_400 }]
+    const hold = (jobs: ReportJob[]) => reportBlock([stored("ses_a", jobs)], ["/w/linked"], lookup, clock(), identity)
+    expect(hold(running)).toBeUndefined()
+    expect(hold(ended)).toContain("names the worktree")
+    // An ended job that names nothing and records no directory is unplaced: with its session gone it holds.
+    expect(hold([{ kind: "shell", sessionID: "ses_a", command: "sleep 9", endedAt: 1_400 }])).toContain("ended")
+    expect(hold([{ kind: "shell", sessionID: "ses_a", command: "sleep 9" }])).toBeUndefined()
   })
 
   test("a job that records its cwd is judged by it alone: no lookup, and it holds only inside the worktree", () => {
