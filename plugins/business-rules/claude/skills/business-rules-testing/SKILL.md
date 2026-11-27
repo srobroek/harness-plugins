@@ -62,7 +62,7 @@ Each engine runs the case kinds of its role. All of them are required in CI (G3)
 | `reject` | A bad rule fails at check | Required | Diagnostic, if it has a checker |
 | `profile` | Each enabled feature works, and each excluded one is refused | Required | Diagnostic for check-time options |
 | `presence`, `presence_record` | The presence table holds for every kind and state | Required | Required |
-| `bundle` | A tampered bundle is refused | Required, on its own bundle | Required |
+| `bundle` | A tampered bundle is refused | Required, on its own bundle | Required, refused by the host's verifier |
 | `shipped` | Every `CheckedExpr` a checker of record wrote evaluates to the expected value | | Required |
 | `portability` | A `CheckedExpr` from a writer that is not of record reads across engines | | Diagnostic |
 
@@ -116,6 +116,7 @@ directory:
 | --- | --- |
 | The bundle names another profile's digest | Refused |
 | A source file was edited after the check | Refused, where the verifier has the sources |
+| A rule source has no entry in the bundle | Refused, where the verifier has the sources |
 | One entry's payload replaced by another entry's payload, metadata unchanged | Refused |
 | The checker is not one of the profile's checkers of record | Refused |
 | Verification with no sources | Passes: digest, checker and payloads only |
@@ -131,22 +132,51 @@ A bundle from a writer that is not of record never runs as a gate case. Evaluate
   mixed-type list literal;
 - one case per excluded feature, which the checker must refuse: a math function, optional syntax (`.?`),
   `cel.bind`, an encoder, a lists-extension function, and a `double` compared with an `int`;
-- one adapter test per engine that a manifest with an unknown extension version (strings 99) is refused at load.
+- one adapter test per engine that a manifest with an unknown extension version (strings 99) is refused at load;
+- one refusal fixture per adapter: a descriptor set whose bytes differ from the manifest's SHA-256, refused before
+  any environment is built.
 
 An evaluator cannot enforce a check-time option, so its result on an excluded option is diagnostic. It is
 safe only because it runs reference-checked bundles.
+
+### The JCS vector
+
+One committed test vector holds a manifest, its RFC 8785 canonical bytes and its digest. Every adapter that
+computes the profile digest reproduces both exactly. The vector covers:
+
+- key order, at the top level and in nested objects;
+- string escaping: a quote, a backslash and a control character;
+- both integer bounds, `9007199254740992` and `-9007199254740992`;
+- the end of the output: the bytes end at the closing brace, with no trailing newline.
+
+Add refusal cases for the generator: a float, a non-ASCII string, and an integer one past each bound.
+
+### Standalone expressions
+
+When config files hold expressions (`business-rules-cel`, `formats.md`):
+
+- a file with two bad expressions reports both issues in one load, each with its JSON Pointer path, line and
+  column in the file;
+- an expression whose output type differs from its slot is refused, for example an `int` where a guard needs a
+  `bool`;
+- both checkers of record agree on whether each shipped expression checks, and on its output type;
+- a YAML fixture with a duplicate key, and one with an unquoted `!has(...)`, fail at load.
 
 ### Policies
 
 When the project uses cel-policy (C1):
 
-- one refusal fixture per excluded feature: `aggregate`, a nested `rule`, `variables`, and a `match` with no
-  unconditional final choice;
+- one refusal fixture per excluded feature: `variables`, `aggregate`, a nested `rule`, `explanation` and
+  `imports`;
+- refusal fixtures for the choice rules: a non-final choice with no `condition`, and a final choice with one;
+- a refusal fixture for a list whose result type differs from its slot type, for example every choice with a
+  `dyn` output in a `bool` slot;
 - the compiler's own refusals: a literal `false` condition, a literally true choice before the last one, and an
   output whose type does not match the other outputs;
 - one accepted fixture with a condition that is always false without being the literal `false`, which documents
   the gap;
-- value cases for the compiled list on every evaluator, including the final "unknown" choice.
+- value cases for the compiled list on every evaluator, including the final "unknown" choice, which the host
+  records as an unknown result.
 
 ## Running the cases
 

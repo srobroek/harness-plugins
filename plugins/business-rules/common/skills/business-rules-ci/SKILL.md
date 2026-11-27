@@ -16,8 +16,8 @@ This skill lays out the CI jobs that enforce the `business-rules-cel` standard. 
 | Job | What it runs | Fails when | Rule |
 | --- | --- | --- | --- |
 | `environment` | Regenerate the descriptor set, the profile manifests and the environment files from the published JSON Schemas | `git status --porcelain -- <generated dirs>` is not empty, or the generator refuses a scope | G6, G7 |
-| `check` | The reference checker over every rule file, then build the bundle and verify its digests | Any issue (printed as `file:line:col: message`), a wrong output type, a refused policy feature, or a digest that does not match | G1, P2, C1 |
-| `engines` | The supported-profile suite on each selected engine, one matrix cell per engine, against the bundle from `check` | A case of the engine's role fails, or the two checkers of record disagree | G3 |
+| `check` | The reference checker over every rule file, then build the bundle and verify its digests | A descriptor set that does not match its manifest, any issue (printed as `file:line:col: message`), a wrong output type for a slot, a refused policy feature, or a digest that does not match | G1, P2, C1 |
+| `engines` | The supported-profile suite on each selected engine, one matrix cell per engine, against the bundle from `check`, including the JCS vector | A case of the engine's role fails, the adapter does not reproduce the JCS vector, or the two checkers of record disagree | G3 |
 | `conformance` | cel-spec's simple tests on every engine, compared with the committed failure baseline | An engine has no results, or its failure set changed | G3, G4 |
 | `authoring-tests` | `cel-expr eval -tests` over the typed test cases, with a verified `cel-expr` release | A case fails, or coverage is below the project's threshold | G8 (the CLI reads the generated environment) |
 | `ci-gate` | The one required check, over every job above | Any job failed | |
@@ -46,6 +46,24 @@ Notes on each job:
   Update the baseline on purpose, in its own commit, with the reason.
 - **cost.** When the project reports cel-go's static cost estimate, print it in the `check` job and label it an
   estimate unless G5's two conditions hold.
+
+## Locally and in CI
+
+The same `just` recipes run on a laptop and in CI. A laptop runs the fast steps for the work at hand, and CI runs
+all of them on every pull request.
+
+| Step | On a laptop | In CI |
+| --- | --- | --- |
+| Regenerate the environment | `just rules-gen` after a schema change, and commit the output with it | `rules-drift` fails on any difference |
+| Check the rules | `just rules-check` before each commit that touches a rule | The `check` job |
+| Build and verify the bundle | `just rules-bundle` when the project commits the bundle | The `check` job, which uploads it |
+| The supported-profile suite | The host engine's runner, such as `just rules-suite python` | Every selected engine, one matrix cell each |
+| Conformance | On an engine bump, to see the new failure set before the pull request | Every pull request |
+| Authoring tests | `cel-expr eval` and the MCP server while writing a rule (`business-rules-cel-authoring`) | The `authoring-tests` job |
+| Install `cel-expr` | The `install-cel-expr` recipe, one time | The same recipe, on every run |
+
+A user who writes rules for a project that ships a rules compile command runs that command. It is the same
+reference checker, at the same pinned version.
 
 ## Pinning and engine bumps
 
