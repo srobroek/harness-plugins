@@ -775,6 +775,7 @@
       "harnesses": {
         "opencode": {
           "skills": [
+            "business-rules-cel",
             "business-rules-guide"
           ],
           "agents": [],
@@ -789,6 +790,7 @@
         },
         "claude": {
           "skills": [
+            "business-rules-cel",
             "business-rules-guide"
           ],
           "agents": [],
@@ -801,6 +803,7 @@
         },
         "omp": {
           "skills": [
+            "business-rules-cel",
             "business-rules-guide"
           ],
           "agents": [],
@@ -813,6 +816,7 @@
         },
         "pi": {
           "skills": [
+            "business-rules-cel",
             "business-rules-guide"
           ],
           "agents": [],

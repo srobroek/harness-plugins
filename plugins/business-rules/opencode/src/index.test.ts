@@ -5,7 +5,7 @@ import plugin from "./index.ts"
 test("registers the business-rules skills and disposes them", async () => {
   const fake = createFakeContext()
   const cleanup = await plugin.setup(fake.context)
-  expect([...fake.skills.keys()].sort()).toEqual(["business-rules-guide"])
+  expect([...fake.skills.keys()].sort()).toEqual(["business-rules-cel", "business-rules-guide"])
   for (const skill of fake.skills.values())
     expect(String(skill.content)).not.toMatch(/skill:\/\/|rule:\/\/|\bbash\b|TTSR/)
   await cleanup?.()

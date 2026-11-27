@@ -5,7 +5,7 @@ Business rules and CEL: when to use CEL, the CEL adoption standard, rule tests, 
 
 | Kind | opencode | claude | omp | pi |
 | --- | --- | --- | --- | --- |
-| skills | business-rules-guide | business-rules-guide | business-rules-guide | business-rules-guide |
+| skills | business-rules-cel, business-rules-guide | business-rules-cel, business-rules-guide | business-rules-cel, business-rules-guide | business-rules-cel, business-rules-guide |
 | agents | - | - | - | - |
 | commands | - | - | - | - |
 | rules | - | - | - | - |

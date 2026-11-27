@@ -32,3 +32,8 @@ The plugin registers these skills from `skills/`, unless a skill with the same i
 
 - `business-rules-guide`: when to use CEL, when a named guard in host code is enough, and when neither fits.
   It also says why Rego, Cedar, JSONata, JSON Logic, expr-lang and Starlark were ruled out.
+- `business-rules-cel`: the CEL adoption standard in four layers. The general rules apply to every project. The
+  protobuf portability profile covers rules that cross processes or languages. The engine and tooling choices
+  are dated 2026-11, and the cel-policy profile covers rule lists. It also covers the pipeline from TypeSpec to
+  a checked bundle, structural scopes and presence. `references/` has one file per language (Python, Go, Rust,
+  TypeScript) with the packages to use and their gotchas, plus the gotchas for every engine.
