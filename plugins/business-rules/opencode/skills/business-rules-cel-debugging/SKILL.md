@@ -111,11 +111,11 @@ with `has()`.
 The denominator is `0` at runtime:
 
 - Issue: `x / y > 10` fails when `y == 0`.
-- Solution: `y != 0 && (x / y > 10)`.
+- Solution: guard the denominator, and decide what the rule means when it is zero. `y != 0 && x / y > 10` is
+  false at zero. Write `y == 0 || x / y > 10` when zero must pass.
 
-You can also convert both operands to doubles. That avoids the error, but the result can be infinite:
-
-- Solution: `double(x) / double(y) > 10.0`, which is infinite when `y == 0.0`.
+Do not convert the operands to `double` to avoid the error. A `double` divided by zero is infinite, not an error,
+so `double(x) / double(y) > 10.0` is true when `y` is zero and `x` is positive: the guard passes.
 
 ### 3. "No such overload" at runtime
 

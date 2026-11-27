@@ -23,3 +23,5 @@ Changes made in srobroek/harness-plugins, 2026-11:
   extension is a profile change.
 - Replaced "go install ...@latest" with an install from a verified release, and added the reference-checker step.
 - Removed skippedTestCases, which the v0.4.0 release does not have.
+- Replaced the conversion to double as a division-by-zero fix with an explicit zero guard: a double divided by
+  zero is infinite, so the converted guard can pass.

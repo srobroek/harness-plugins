@@ -87,10 +87,13 @@ Test cases must cover edge cases and missing fields. Take the missing-field stat
 `business-rules-cel`: missing, explicit `null` and zero, for each field kind the rule reads. Prune cases that do
 not raise coverage.
 
-Guard every map key and list index:
+Guard every map key and list index with a conditional, and give the fallback the value's type:
 
-- Before: `m[k]`. After: `k in m && m[k]`, or `m[?k].orValue(<default>)`.
-- Before: `l[i]`. After: `l.size() > i && l[i]`, or `l[?i].orValue(<default>)`.
+- Before: `m[k]`. After: `k in m ? m[k] : <default>`, or `m[?k].orValue(<default>)`.
+- Before: `l[i]`. After: `(0 <= i && i < l.size()) ? l[i] : <default>`, or `l[?i].orValue(<default>)`.
+
+`<default>` has the type of the values, for example `0` for a `map(string, int)`. Joining the guard with `&&`
+(`k in m && m[k]`) checks only when the values are `bool`.
 
 The `?` forms need the `optional` extension. Use them only when the profile manifest lists it.
 

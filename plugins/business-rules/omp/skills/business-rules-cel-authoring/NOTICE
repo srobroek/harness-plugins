@@ -22,4 +22,6 @@ Changes made in srobroek/harness-plugins, 2026-11:
   imports, and outputs of the slot type. Noted that the v0.4.0 release has no -format=policy.
 - Added the steps that run the project's reference checker and add the cases to the project's suite.
 - Removed skippedTestCases, which the v0.4.0 release does not have.
+- Rewrote the map-key and list-index guards as conditionals with a typed fallback, and bounded the index below
+  by 0.
 - Left out the upstream examples and references, which hand-write environments.
