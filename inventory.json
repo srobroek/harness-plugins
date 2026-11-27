@@ -776,7 +776,8 @@
         "opencode": {
           "skills": [
             "business-rules-cel",
-            "business-rules-guide"
+            "business-rules-guide",
+            "business-rules-testing"
           ],
           "agents": [],
           "commands": [],
@@ -791,7 +792,8 @@
         "claude": {
           "skills": [
             "business-rules-cel",
-            "business-rules-guide"
+            "business-rules-guide",
+            "business-rules-testing"
           ],
           "agents": [],
           "commands": [],
@@ -804,7 +806,8 @@
         "omp": {
           "skills": [
             "business-rules-cel",
-            "business-rules-guide"
+            "business-rules-guide",
+            "business-rules-testing"
           ],
           "agents": [],
           "commands": [],
@@ -817,7 +820,8 @@
         "pi": {
           "skills": [
             "business-rules-cel",
-            "business-rules-guide"
+            "business-rules-guide",
+            "business-rules-testing"
           ],
           "agents": [],
           "commands": [],

@@ -37,3 +37,7 @@ The plugin registers these skills from `skills/`, unless a skill with the same i
   are dated 2026-11, and the cel-policy profile covers rule lists. It also covers the pipeline from TypeSpec to
   a checked bundle, structural scopes and presence. `references/` has one file per language (Python, Go, Rust,
   TypeScript) with the packages to use and their gotchas, plus the gotchas for every engine.
+- `business-rules-testing`: the rule test suite. It covers table-driven cases in one JSON file per scope and the
+  supported-profile gate by engine role. It lists the cases every project needs: wrong fields per scope, presence,
+  bundle tampering, the effective environment and policies. It shows how to run them under pytest, go test,
+  cargo test and vitest.

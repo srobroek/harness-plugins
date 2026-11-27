@@ -8,6 +8,14 @@ description: "Use for business rules, policies, guards, validation rules or expr
 Decide first where a rule lives. A rule is a condition or a choice that the code applies to a record: a guard
 on a transition, a policy, a validation rule, or an expression that a config file holds.
 
+When the answer is CEL, load the matching skill below with the skill tool, by id, in this same turn, and every
+other row the task spans. Answer from the loaded skill, not from this table.
+
+| Situation | Load skill |
+| --- | --- |
+| Adopting CEL in a project: the type pipeline, structural scopes, presence, CheckedExpr bundles, cel-policy, or the CEL package for a language | `business-rules-cel` |
+| Writing or reviewing rule tests: case tables, the supported-profile suite per engine, presence, wrong-field, bundle and effective-environment cases | `business-rules-testing` |
+
 ## Where a rule lives
 
 | Situation | Where the rule lives |
