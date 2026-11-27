@@ -1,3 +1,9 @@
+## beads [1.5.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.4.0...beads--v1.5.0) (2026-11-27)
+
+### Features
+
+* **beads:** accept coder for implementer beads in FO-5 routing ([#237](https://github.com/srobroek/harness-plugins/issues/237)) ([140345c](https://github.com/srobroek/harness-plugins/commit/140345c357eec3ebf6d480bf507f537d163cf669))
+
 ## beads [1.4.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.3.1...beads--v1.4.0) (2026-11-27)
 
 ### Features
