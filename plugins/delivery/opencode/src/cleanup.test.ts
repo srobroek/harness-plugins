@@ -5554,6 +5554,8 @@ describe("pending cleanup: one remover per worktree", () => {
         await checking
         await reused
         expect(h.pending.pendingDeleteCount()).toBe(1)
+        // The old retry wrote nothing and must not have lifted the newer deletion's hold, though the host no longer has the session.
+        expect(h.pending.unsettledCount()).toBe(1) // the newer deletion is still a hold: it is what refuses removal, whatever the host says of the session
       } finally {
         console.error = original
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
@@ -5564,6 +5566,52 @@ describe("pending cleanup: one remover per worktree", () => {
       await check(h) // and now it succeeds
       expect(h.pending.pendingDeleteCount()).toBe(0)
       expect(reportIds(h)).toEqual([])
+      await h.finish()
+    })
+
+    // A timer that fires while a pass's retry is in flight returns; the retry then owns the timer, and a failure re-arms it.
+    needsPermissions("a timer that fires during a pass's retry is replaced when that retry fails, and the hold clears later", async () => {
+      const queue = queuedWaits()
+      const t = graceTimers()
+      const h = await harness("running-grace-pass-retry", { retryAt: ["check"], lock: queue.lock, graceTimer: t.graceTimer })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      h.advance(GRACE_MS)
+      const holder = await takeLease(h)
+      const checking = check(h) // the pass's retry waits for the lease
+      await queue.reached(1)
+      await t.live()[0]?.run() // the timer fires: a retry is in flight, so it does nothing
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        holder.release()
+        await holder.done
+        queue.waits[0]?.()
+        await checking // the retry's write fails
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      const armed = t.live(1)
+      expect(armed).toHaveLength(1)
+      await armed[0]?.run()
+      expect(reportIds(h)).toEqual([])
+      await h.finish()
+    })
+
+    // A deletion retry that changes nothing on disk leaves the timer that is already armed alone.
+    test("a deletion retry that writes nothing leaves the armed timer unchanged", async () => {
+      const t = graceTimers()
+      const h = await harness("running-delete-timer-kept", { retryAt: ["check"], graceTimer: t.graceTimer })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }) // the jobs end, held for the window
+      const armed = t.live()
+      expect(armed).toHaveLength(1)
+      h.advance(1_000)
+      await check(h) // the pass retries the deletion: nothing to write
+      expect(t.timers).toHaveLength(1)
+      expect(armed[0]?.cancelled).toBe(false)
       await h.finish()
     })
 

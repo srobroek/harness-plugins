@@ -7682,6 +7682,11 @@ function createPendingCleanup(deps) {
       return;
     graceTimers.set(sessionID, startTimer(() => expireGrace(sessionID, attempt), backoffMs(attempt)));
   };
+  const rearmIfFailed = (sessionID, gen, attempt = 1) => {
+    const after = unsettled.get(sessionID);
+    if (after !== undefined && after.gen === gen && after.failed)
+      rearmExpiry(sessionID, attempt);
+  };
   const expireGrace = async (sessionID, attempt = 0) => {
     graceTimers.delete(sessionID);
     if (disposed)
@@ -7690,7 +7695,7 @@ function createPendingCleanup(deps) {
     if (token !== undefined) {
       try {
         const done = await underStore(() => removeDeleted(sessionID, token));
-        settleDelete(sessionID);
+        settleDelete(sessionID, token);
         if (done && pendingDeletes.get(sessionID) === token)
           pendingDeletes.delete(sessionID);
         if (done && lastGen.get(sessionID) === token)
@@ -7716,16 +7721,14 @@ function createPendingCleanup(deps) {
         entry.reason = "its report is being written again";
       }
       await recordHolds(sessionID, gen);
-      const after = unsettled.get(sessionID);
-      if (after !== undefined && after.gen === gen && after.failed)
-        rearmExpiry(sessionID, attempt + 1);
+      rearmIfFailed(sessionID, gen, attempt + 1);
     } finally {
       retrying.delete(sessionID);
     }
   };
   const recordHolds = async (sessionID, gen) => {
     const entry = unsettled.get(sessionID);
-    if (entry === undefined || entry.gen !== gen || entry.deleting === true)
+    if (entry === undefined || entry.gen !== gen || entry.deleting !== undefined)
       return;
     const root = receiptDirectory(env);
     const { at, jobs } = entry;
@@ -7758,20 +7761,22 @@ function createPendingCleanup(deps) {
       scheduleExpiry(sessionID, jobs);
   };
   const retryUnsettled = async (except) => {
-    const due = [...unsettled].filter(([id, entry]) => entry.failed && !entry.deleting && id !== except && !retrying.has(id));
+    const due = [...unsettled].filter(([id, entry]) => entry.failed && entry.deleting === undefined && id !== except && !retrying.has(id));
     const lapsed = [...reported].filter(([id, jobs]) => id !== except && !unsettled.has(id) && !pendingDeletes.has(id) && !retrying.has(id) && jobs.length > 0 && jobs.every((job) => job.endedAt !== undefined && endedFor(id, job) >= GRACE_MS)).map(([id]) => id);
     if (due.length === 0 && lapsed.length === 0 && pendingDeletes.size === 0 || !reportsWritable(receiptDirectory(env)))
       return;
     const deletes = [...pendingDeletes].map(async ([id, token]) => {
       try {
         const done = await underStore(() => removeDeleted(id, token));
-        settleDelete(id);
+        settleDelete(id, token);
         if (done && pendingDeletes.get(id) === token)
           pendingDeletes.delete(id);
         if (done && lastGen.get(id) === token)
           lastGen.delete(id);
       } catch (error) {
         console.error(`delivery: could not remove the report of deleted session ${id}: ${error instanceof Error ? error.message : String(error)}`);
+        if (pendingDeletes.get(id) === token)
+          rearmExpiry(id, 1);
       }
     });
     await Promise.all([
@@ -7779,7 +7784,9 @@ function createPendingCleanup(deps) {
       ...lapsed.map(async (id) => {
         retrying.add(id);
         try {
-          await recordHolds(id, beginReport(id, []));
+          const gen = beginReport(id, []);
+          await recordHolds(id, gen);
+          rearmIfFailed(id, gen);
         } finally {
           retrying.delete(id);
         }
@@ -7790,6 +7797,7 @@ function createPendingCleanup(deps) {
         entry.reason = "its report is being written again";
         try {
           await recordHolds(id, entry.gen);
+          rearmIfFailed(id, entry.gen);
         } finally {
           retrying.delete(id);
         }
@@ -7811,9 +7819,11 @@ function createPendingCleanup(deps) {
       return ended;
     });
     if (jobs.some((job) => endedFor(sessionID, job) < GRACE_MS)) {
-      if (jobs.some((job, index) => job !== before[index]))
+      const changed = jobs.some((job, index) => job !== before[index]);
+      if (changed)
         writeReport(root, { sessionID, jobs, at: stamp(), pid: process.pid, host: hostname2(), instance: activation, gen: token });
-      scheduleExpiry(sessionID, jobs);
+      if (changed || !graceTimers.has(sessionID))
+        scheduleExpiry(sessionID, jobs);
       return false;
     }
     removeReport(root, sessionID, activation, token);
@@ -7823,17 +7833,17 @@ function createPendingCleanup(deps) {
     graceTimers.delete(sessionID);
     return true;
   };
-  const settleDelete = (sessionID) => {
-    if (unsettled.get(sessionID)?.deleting === true)
+  const settleDelete = (sessionID, token) => {
+    if (unsettled.get(sessionID)?.deleting === token)
       unsettled.delete(sessionID);
   };
   const forgetSession = async (sessionID) => {
-    unsettled.set(sessionID, { gen: ++generation, at: stamp(), reason: "its deletion is still being recorded", failed: false, jobs: [], deleting: true });
     const token = lastGen.get(sessionID) ?? 0;
+    unsettled.set(sessionID, { gen: ++generation, at: stamp(), reason: "its deletion is still being recorded", failed: false, jobs: [], deleting: token });
     pendingDeletes.set(sessionID, token);
     try {
       const done = await underStore(() => removeDeleted(sessionID, token));
-      settleDelete(sessionID);
+      settleDelete(sessionID, token);
       if (done && pendingDeletes.get(sessionID) === token)
         pendingDeletes.delete(sessionID);
       if (done && lastGen.get(sessionID) === token)

@@ -309,7 +309,7 @@ type StoreHold = { active: boolean; lease: { release: () => Promise<void> } | un
  * A report not yet on disk: its generation and stamp, why it is not (`failed` once a write was
  * refused), and the job list the session reported, so any later pass can write it again.
  */
-type UnsettledReport = { gen: number; at: number; reason: string; failed: boolean; jobs: ReportJob[]; deleting?: boolean }
+type UnsettledReport = { gen: number; at: number; reason: string; failed: boolean; jobs: ReportJob[]; deleting?: number }
 
 /** A job's identity across snapshots: where it runs is not part of it (the writer adds that). */
 const jobKey = (job: ReportJob): string => [job.kind, job.sessionID, job.childSessionID, job.shellID, job.command].join("\0")
@@ -1461,6 +1461,15 @@ export function createPendingCleanup(deps: PendingDeps) {
   }
 
   /**
+   * Whoever ran the retry of a snapshot owns the timer after it: a timer that fired while that retry was in flight returned
+   * and is gone, so a failure sets the next one (never none while the report is unwritten).
+   */
+  const rearmIfFailed = (sessionID: string, gen: number, attempt = 1): void => {
+    const after = unsettled.get(sessionID)
+    if (after !== undefined && after.gen === gen && after.failed) rearmExpiry(sessionID, attempt)
+  }
+
+  /**
    * The timer's work: the same retry and clear paths as the triggers, under the lease and the usual generation rules.
    * A lease that cannot be taken, or a write that fails, sets the next timer (`attempt` counts the failures in a row).
    */
@@ -1471,7 +1480,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     if (token !== undefined) {
       try {
         const done = await underStore(() => removeDeleted(sessionID, token))
-        settleDelete(sessionID)
+        settleDelete(sessionID, token)
         if (done && pendingDeletes.get(sessionID) === token) pendingDeletes.delete(sessionID)
         if (done && lastGen.get(sessionID) === token) lastGen.delete(sessionID)
       } catch (error) {
@@ -1495,8 +1504,7 @@ export function createPendingCleanup(deps: PendingDeps) {
         entry.reason = "its report is being written again"
       }
       await recordHolds(sessionID, gen)
-      const after = unsettled.get(sessionID)
-      if (after !== undefined && after.gen === gen && after.failed) rearmExpiry(sessionID, attempt + 1)
+      rearmIfFailed(sessionID, gen, attempt + 1)
     } finally {
       retrying.delete(sessionID)
     }
@@ -1511,7 +1519,7 @@ export function createPendingCleanup(deps: PendingDeps) {
    */
   const recordHolds = async (sessionID: string, gen: number): Promise<void> => {
     const entry = unsettled.get(sessionID)
-    if (entry === undefined || entry.gen !== gen || entry.deleting === true) return
+    if (entry === undefined || entry.gen !== gen || entry.deleting !== undefined) return
     const root = receiptDirectory(env)
     const { at, jobs } = entry
     let committed = false
@@ -1549,7 +1557,7 @@ export function createPendingCleanup(deps: PendingDeps) {
    * Run at the start of every pass, before a removal's last look, and by any session's idle hook.
    */
   const retryUnsettled = async (except?: string): Promise<void> => {
-    const due = [...unsettled].filter(([id, entry]) => entry.failed && !entry.deleting && id !== except && !retrying.has(id))
+    const due = [...unsettled].filter(([id, entry]) => entry.failed && entry.deleting === undefined && id !== except && !retrying.has(id))
     // Sessions whose every job has ended and whose window is over: their report is cleared by a snapshot of nothing.
     const lapsed = [...reported]
       .filter(([id, jobs]) => id !== except && !unsettled.has(id) && !pendingDeletes.has(id) && !retrying.has(id) && jobs.length > 0 && jobs.every((job) => job.endedAt !== undefined && endedFor(id, job) >= GRACE_MS))
@@ -1559,11 +1567,12 @@ export function createPendingCleanup(deps: PendingDeps) {
     const deletes = [...pendingDeletes].map(async ([id, token]) => {
       try {
         const done = await underStore(() => removeDeleted(id, token))
-        settleDelete(id)
+        settleDelete(id, token)
         if (done && pendingDeletes.get(id) === token) pendingDeletes.delete(id)
         if (done && lastGen.get(id) === token) lastGen.delete(id)
       } catch (error) {
         console.error(`delivery: could not remove the report of deleted session ${id}: ${error instanceof Error ? error.message : String(error)}`)
+        if (pendingDeletes.get(id) === token) rearmExpiry(id, 1)
       }
     })
     await Promise.all([
@@ -1571,7 +1580,9 @@ export function createPendingCleanup(deps: PendingDeps) {
       ...lapsed.map(async (id) => {
         retrying.add(id)
         try {
-          await recordHolds(id, beginReport(id, []))
+          const gen = beginReport(id, [])
+          await recordHolds(id, gen)
+          rearmIfFailed(id, gen)
         } finally {
           retrying.delete(id)
         }
@@ -1582,6 +1593,7 @@ export function createPendingCleanup(deps: PendingDeps) {
         entry.reason = "its report is being written again"
         try {
           await recordHolds(id, entry.gen)
+          rearmIfFailed(id, entry.gen)
         } finally {
           retrying.delete(id)
         }
@@ -1610,8 +1622,10 @@ export function createPendingCleanup(deps: PendingDeps) {
       return ended
     })
     if (jobs.some((job) => endedFor(sessionID, job) < GRACE_MS)) {
-      if (jobs.some((job, index) => job !== before[index])) writeReport(root, { sessionID, jobs, at: stamp(), pid: process.pid, host: hostname(), instance: activation, gen: token })
-      scheduleExpiry(sessionID, jobs)
+      const changed = jobs.some((job, index) => job !== before[index])
+      if (changed) writeReport(root, { sessionID, jobs, at: stamp(), pid: process.pid, host: hostname(), instance: activation, gen: token })
+      // A retry that wrote nothing leaves the timer that is armed (the window's, or a backoff's) as it is.
+      if (changed || !graceTimers.has(sessionID)) scheduleExpiry(sessionID, jobs)
       return false
     }
     removeReport(root, sessionID, activation, token)
@@ -1623,20 +1637,20 @@ export function createPendingCleanup(deps: PendingDeps) {
   }
 
   /** The deletion's end of the session's jobs is on disk (or there was nothing to end): the session's deletion mark goes. */
-  const settleDelete = (sessionID: string): void => {
-    if (unsettled.get(sessionID)?.deleting === true) unsettled.delete(sessionID)
+  const settleDelete = (sessionID: string, token: number): void => {
+    if (unsettled.get(sessionID)?.deleting === token) unsettled.delete(sessionID)
   }
 
   /** A deleted session runs nothing: its snapshots in flight write nothing. Its file goes under the lease, or is retried with the session's generation as the token. */
   const forgetSession = async (sessionID: string): Promise<void> => {
     // Until the end of the session's jobs is on disk its work is unknown (the host may already say the session is gone, and a
     // report of a session it does not have is skipped): the mark is set at once, synchronously, and a removal holds on it.
-    unsettled.set(sessionID, { gen: ++generation, at: stamp(), reason: "its deletion is still being recorded", failed: false, jobs: [], deleting: true })
     const token = lastGen.get(sessionID) ?? 0
+    unsettled.set(sessionID, { gen: ++generation, at: stamp(), reason: "its deletion is still being recorded", failed: false, jobs: [], deleting: token })
     pendingDeletes.set(sessionID, token)
     try {
       const done = await underStore(() => removeDeleted(sessionID, token))
-      settleDelete(sessionID)
+      settleDelete(sessionID, token)
       if (done && pendingDeletes.get(sessionID) === token) pendingDeletes.delete(sessionID)
       if (done && lastGen.get(sessionID) === token) lastGen.delete(sessionID)
     } catch (error) {
