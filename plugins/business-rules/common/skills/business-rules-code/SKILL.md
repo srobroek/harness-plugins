@@ -44,8 +44,8 @@ guard that reads the table.
 
 ### One adapter per runtime
 
-- All calls to a rule engine go through one adapter module per runtime, with P4's five operations: `load`,
-  `check`, `program`, `eval` and `identity`. No other module imports the engine.
+- All calls to a rule engine go through one adapter module per runtime, with P4's five operations: `load()`,
+  `check()`, `program()`, `eval()` and `identity()`. No other module imports the engine.
 - Only the adapter knows the engine's API, its options and its error forms. A change of engine changes that one
   module.
 - Two runtimes have two adapters, for example a Python host and a Go checking tool in CI. Both run the same case

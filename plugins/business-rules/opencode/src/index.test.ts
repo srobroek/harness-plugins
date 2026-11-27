@@ -11,6 +11,7 @@ test("registers the business-rules skills and disposes them", async () => {
     "business-rules-cel-debugging",
     "business-rules-cel-testing",
     "business-rules-ci",
+    "business-rules-code",
     "business-rules-guide",
     "business-rules-testing",
   ])

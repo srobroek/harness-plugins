@@ -1,6 +1,6 @@
 ---
 name: business-rules-guide
-description: "Use for business rules, policies, guards, validation rules or expressions in config: where the logic lives, and which engine, if any."
+description: "Use for business rules, policies, guards, validation rules or config expressions: where logic lives and which engine."
 ---
 
 # Business rules guide
