@@ -5,7 +5,7 @@
 #   OMP fetches URLs with read: allow webfetch
 #   no OMP built-in tool; tools filters built-ins only: allow dep_scan, allow dep_apply, allow version_gap_scan
 #   OMP has no per-agent directory rule: ask external_directory
-#   OMP has no per-agent skill filter: 21 skill rules
+#   OMP has no per-agent skill filter: 22 skill rules
 name: coder
 description: "Use for scoped code work: implement, fix, debug, test or answer code questions; follows quality-code-design, delegates reviews, verifies changes."
 tools: read, grep, ast_grep, glob, lsp, edit, write, ast_edit, bash, eval, web_search, task
