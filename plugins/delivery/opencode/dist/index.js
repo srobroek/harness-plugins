@@ -6370,9 +6370,10 @@ function reportBlock(reports, forms, lookup, clock, canonical) {
     if (!reportLive(report, clock) || report.jobs.length === 0)
       continue;
     const ours = sameServer(report, clock);
-    if (ours && lookup(report.sessionID)?.state === "missing")
-      continue;
+    const sessionGone = ours && lookup(report.sessionID)?.state === "missing";
     for (const job of report.jobs) {
+      if (sessionGone && job.endedAt === undefined)
+        continue;
       if (namesWorktree(job.command, forms))
         return `session ${report.sessionID} has a ${job.kind} running that names the worktree`;
       if (job.cwd !== undefined) {
@@ -6390,6 +6391,8 @@ function reportBlock(reports, forms, lookup, clock, canonical) {
         if (found.state === "unknown")
           return `session ${report.sessionID} reported work in session ${id}, whose location could not be read`;
         if (found.state === "missing") {
+          if (ours && job.endedAt !== undefined)
+            return `session ${report.sessionID} has a ${job.kind} that ended and may still be stopping, in session ${id}, which the host no longer has`;
           if (ours)
             continue;
           return `session ${report.sessionID} (another server) reported work in session ${id}, which this server cannot place`;
@@ -6818,6 +6821,7 @@ function createPendingCleanup(deps) {
   const activation = `${SERVER_INSTANCE}:${randomUUID4().slice(0, 8)}`;
   const pendingDeletes = new Map;
   const reported = new Map;
+  const graceTimers = new Map;
   const lastGen = new Map;
   const retrying = new Set;
   const retryOn = (trigger) => (deps.retryAt ?? ["pass", "check", "idle"]).includes(trigger);
@@ -7630,13 +7634,50 @@ function createPendingCleanup(deps) {
     unsettled.set(sessionID, { gen, at: stamp(), reason: "its report is still waiting to be written", failed: false, jobs });
     return gen;
   };
-  const withDirectories = async (jobs) => await Promise.all(jobs.map(async (job) => {
-    const owner = job.childSessionID ?? job.sessionID;
-    if (job.cwd !== undefined || job.endedAt !== undefined || owner === undefined)
-      return job;
-    const found = await sessionState(owner);
-    return found.state === "at" && typeof found.directory === "string" ? { ...job, cwd: canonicalDirectory(found.directory) } : job;
-  }));
+  const startTimer = (run, ms) => {
+    if (deps.graceTimer !== undefined)
+      return deps.graceTimer(run, ms);
+    const timer = setTimeout(() => void run(), ms);
+    timer.unref?.();
+    return () => clearTimeout(timer);
+  };
+  const scheduleExpiry = (sessionID, jobs) => {
+    graceTimers.get(sessionID)?.();
+    graceTimers.delete(sessionID);
+    if (disposed)
+      return;
+    const ends = jobs.flatMap((job) => job.endedAt === undefined ? [] : [job.endedAt + GRACE_MS]);
+    if (ends.length === 0)
+      return;
+    graceTimers.set(sessionID, startTimer(() => expireGrace(sessionID), Math.max(0, Math.min(...ends) - now())));
+  };
+  const expireGrace = async (sessionID) => {
+    graceTimers.delete(sessionID);
+    if (disposed)
+      return;
+    const token = pendingDeletes.get(sessionID);
+    if (token !== undefined) {
+      try {
+        const done = await underStore(() => removeDeleted(sessionID, token));
+        if (done && pendingDeletes.get(sessionID) === token)
+          pendingDeletes.delete(sessionID);
+        if (done && lastGen.get(sessionID) === token)
+          lastGen.delete(sessionID);
+      } catch (error) {
+        console.error(`delivery: could not remove the report of deleted session ${sessionID}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
+    if (unsettled.has(sessionID) || retrying.has(sessionID))
+      return;
+    retrying.add(sessionID);
+    try {
+      const running = (reported.get(sessionID) ?? []).filter((job) => job.endedAt === undefined);
+      await recordHolds(sessionID, beginReport(sessionID, running));
+    } finally {
+      retrying.delete(sessionID);
+    }
+  };
   const recordHolds = async (sessionID, gen) => {
     const entry = unsettled.get(sessionID);
     if (entry === undefined || entry.gen !== gen)
@@ -7665,24 +7706,7 @@ function createPendingCleanup(deps) {
       console.error(`delivery: could not record the running work of ${sessionID}: ${why}`);
       return;
     }
-    await recordDirectories(sessionID, gen, at, jobs);
-  };
-  const recordDirectories = async (sessionID, gen, at, jobs) => {
-    if (jobs.length === 0)
-      return;
-    try {
-      const withCwd = await withDirectories(jobs);
-      if (withCwd.every((job, index) => job === jobs[index]))
-        return;
-      await underStore(() => {
-        if (lastGen.get(sessionID) !== gen || unsettled.has(sessionID) || pendingDeletes.has(sessionID))
-          return;
-        writeReport(receiptDirectory(env), { sessionID, jobs: withCwd, at, pid: process.pid, host: hostname2(), instance: activation, gen });
-        reported.set(sessionID, withCwd);
-      });
-    } catch (error) {
-      console.error(`delivery: could not record where the running work of ${sessionID} runs: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    scheduleExpiry(sessionID, jobs);
   };
   const retryUnsettled = async (except) => {
     const due = [...unsettled].filter(([id, entry]) => entry.failed && id !== except && !retrying.has(id));
@@ -7734,10 +7758,13 @@ function createPendingCleanup(deps) {
     if (jobs.some((job) => t - (job.endedAt ?? t) < GRACE_MS)) {
       if (jobs.some((job, index) => job !== before[index]))
         writeReport(root, { sessionID, jobs, at: stamp(), pid: process.pid, host: hostname2(), instance: activation, gen: token });
+      scheduleExpiry(sessionID, jobs);
       return false;
     }
     removeReport(root, sessionID, activation, token);
     reported.delete(sessionID);
+    graceTimers.get(sessionID)?.();
+    graceTimers.delete(sessionID);
     return true;
   };
   const forgetSession = async (sessionID) => {
@@ -7781,6 +7808,9 @@ function createPendingCleanup(deps) {
     for (const timer of timers.values())
       clearTimeout(timer);
     timers.clear();
+    for (const cancel of graceTimers.values())
+      cancel();
+    graceTimers.clear();
     for (const registration of registrations.reverse())
       await registration.dispose();
     await boundedBy(chain, deps.disposeWaitMs ?? DISPOSE_WAIT_MS);
