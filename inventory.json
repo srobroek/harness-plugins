@@ -776,6 +776,7 @@
         "opencode": {
           "skills": [
             "business-rules-cel",
+            "business-rules-ci",
             "business-rules-guide",
             "business-rules-testing"
           ],
@@ -792,6 +793,7 @@
         "claude": {
           "skills": [
             "business-rules-cel",
+            "business-rules-ci",
             "business-rules-guide",
             "business-rules-testing"
           ],
@@ -806,6 +808,7 @@
         "omp": {
           "skills": [
             "business-rules-cel",
+            "business-rules-ci",
             "business-rules-guide",
             "business-rules-testing"
           ],
@@ -820,6 +823,7 @@
         "pi": {
           "skills": [
             "business-rules-cel",
+            "business-rules-ci",
             "business-rules-guide",
             "business-rules-testing"
           ],

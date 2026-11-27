@@ -41,3 +41,6 @@ The plugin registers these skills from `skills/`, unless a skill with the same i
   supported-profile gate by engine role. It lists the cases every project needs: wrong fields per scope, presence,
   bundle tampering, the effective environment and policies. It shows how to run them under pytest, go test,
   cargo test and vitest.
+- `business-rules-ci`: the CI jobs: environment drift, the reference checker over every rule file, bundle digest
+  verification, the per-engine suites, conformance against a failure baseline, and engine pins with a rerun on
+  each bump. It has a `mise.toml` and `justfile` layout and a GitHub Actions workflow with pinned actions.

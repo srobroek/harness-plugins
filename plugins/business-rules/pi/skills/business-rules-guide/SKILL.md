@@ -15,6 +15,7 @@ other row the task spans. Answer from the loaded skill, not from this table.
 | --- | --- |
 | Adopting CEL in a project: the type pipeline, structural scopes, presence, CheckedExpr bundles, cel-policy, or the CEL package for a language | `business-rules-cel` |
 | Writing or reviewing rule tests: case tables, the supported-profile suite per engine, presence, wrong-field, bundle and effective-environment cases | `business-rules-testing` |
+| Setting up CI for rules: environment drift, the reference checker, bundle digests, per-engine suites, engine pins, a GitHub Actions or just layout | `business-rules-ci` |
 
 ## Where a rule lives
 
