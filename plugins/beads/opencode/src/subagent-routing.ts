@@ -2,7 +2,7 @@
  * Delivery FO-5 routing for `subagent` spawns: a bead whose metadata names an
  * `execution_agent_type` goes to that agent, and `implementer-high` only when a
  * bead says so. Orchestrator spawns (agent `general`, tier or legacy role `orchestrate`)
- * are exempt. Reads `bd show --json` on a short budget and fails open.
+ * and read-only review spawns (`REVIEW_AGENTS`) are exempt. Reads `bd show --json` on a short budget and fails open.
  */
 
 import { basename, dirname } from "node:path"
@@ -22,6 +22,9 @@ export const HIGH_TIER_AGENT = "implementer-high"
 /** The agent and tier whose spawns FO-5 does not judge: an orchestrator names beads it will delegate. */
 export const ORCHESTRATOR_AGENT = "general"
 export const ORCHESTRATE_TIER = "orchestrate"
+
+/** Read-only review agents FO-5 does not judge: a review of a bead's change is not that bead's execution. */
+export const REVIEW_AGENTS: readonly string[] = ["code-reviewer", "security-auditor", "security-reviewer"]
 
 /** At most this many bead ids are looked up per spawn. */
 const MAX_IDS = 8
@@ -117,6 +120,11 @@ export function decideRouting(agent: string, beads: ReadonlyArray<BeadRouting>):
 
 export type Spawn = { agent: string; prompt: string; tier?: string }
 
+/** Whether a spawn goes to one of the read-only review agents. */
+export function isReviewSpawn(spawn: Pick<Spawn, "agent">): boolean {
+  return REVIEW_AGENTS.some((reviewer) => agentMatches(spawn.agent, reviewer))
+}
+
 /** Whether a spawn is an orchestrator's: agent `general`, or tier (or legacy `role`) `orchestrate`. */
 export function isOrchestratorSpawn(spawn: Pick<Spawn, "agent" | "tier">): boolean {
   return agentMatches(spawn.agent, ORCHESTRATOR_AGENT) || spawn.tier?.trim().toLowerCase() === ORCHESTRATE_TIER
@@ -151,7 +159,7 @@ export async function registerAgentRouting(ctx: Context, deps: RoutingDeps = {})
   const before = await ctx.tool.hook("execute.before", async (event) => {
     if (event.tool !== "subagent") return
     const spawn = spawnInput(event.input)
-    if (spawn === undefined || isOrchestratorSpawn(spawn)) return
+    if (spawn === undefined || isOrchestratorSpawn(spawn) || isReviewSpawn(spawn)) return
     let decision: RoutingDecision = { kind: "allow" }
     try {
       const env = lifecycleBdEnvironment(directory, baseEnv())

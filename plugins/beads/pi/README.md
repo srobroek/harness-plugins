@@ -271,8 +271,10 @@ When the location has a store, a second `execute.before` hook checks each new
 
 Orchestrator spawns are exempt, because an orchestrator names the many beads it
 will delegate: a spawn to the `general` agent, or with tier `orchestrate` (or the
-legacy `role: "orchestrate"`), skips the check and the bead lookup. Every other
-spawn is judged as above. To switch the gate off for all spawns, set
+legacy `role: "orchestrate"`), skips the check and the bead lookup. Review spawns
+are exempt too, because a reviewer reads a bead's change rather than executing the
+bead: a spawn to `code-reviewer`, `security-auditor` or `security-reviewer`
+(namespaced or not) skips the check. Every other spawn is judged as above. To switch the gate off for all spawns, set
 `{ "gates": { "bead-agent-routing": { "enabled": false } } }`.
 
 A resumed call (with `sessionID`), a prompt with no ids, a failed or slow `bd`

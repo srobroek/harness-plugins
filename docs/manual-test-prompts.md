@@ -584,6 +584,13 @@ Use the implementer-high agent to answer one question about bead <id>: what is i
 **Expect:** the spawn runs, and its result carries an advisory to use `implementer` unless the brief states an implementer-high criterion. Needs delivery.
 **If not:** `HIGH_TIER_AGENT` in `plugins/beads/opencode/src/subagent-routing.ts`.
 
+```text
+Use the code-reviewer agent to review bead <new-id>: say only whether it has a description.
+```
+
+**Expect:** the spawn runs without an FO-5 refusal. Needs delivery.
+**If not:** `REVIEW_AGENTS` in `plugins/beads/opencode/src/subagent-routing.ts`.
+
 ### Gate `pr-bead-link-gate` (needs a GitHub repo with a live ledger)
 
 ```text
