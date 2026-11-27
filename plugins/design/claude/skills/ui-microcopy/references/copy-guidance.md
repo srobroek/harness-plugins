@@ -39,6 +39,16 @@ Structure: What this is + Why it's empty + How to start
 ### Onboarding
 - Progressive disclosure, one concept at a time
 
+### Landing and Docs Pages
+Structure: What it is + Who it serves + What it does for them + Where to go next
+- Read the project's README, design plan, architecture overview and the ADRs or specs a page summarises before you write it. Describe the product from them, not from the last change.
+- Write lasting documentation. A reader next year should find every sentence still true.
+- Mark planned capability as planned, in a short label or aside, never as working and never as a progress diary.
+- Leave out dates and status words ("today", "currently", "as of", "so far", "for now") from hand-written prose. Phase or release status belongs in generated data.
+- Leave out repository history: commits, branches, rebases, "previously", "replaced", "was added". Changelogs and release notes carry that.
+- Hero: one line that names the product and its outcome. Calls to action name the destination ("Read the plan", "Contracts").
+- Feature card: the concept's name, then one sentence on what it gives the user.
+
 ## Voice and Tone
 
 Adapt tone to context:

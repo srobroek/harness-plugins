@@ -7,7 +7,7 @@ subagentOnlyExtensions: ../extensions/design.js, npm:pi-web-access
 allowedAgents: design-critic, a11y-auditor, scout, worker
 allowNestedSubagents: true
 async: true
-skills: design-system-audit, ui-review, design-prototype, design-upstream-preflight, design-token-discipline, design-component-truth, design-no-slop, design-evidence, design-md
+skills: design-system-audit, ui-review, design-prototype, design-upstream-preflight, design-token-discipline, design-component-truth, design-no-slop, design-evidence, design-md, ui-microcopy
 inheritProjectContext: true
 inheritSkills: true
 ---
@@ -26,7 +26,9 @@ and apply the `design-upstream-preflight` skill for the routes this task enables
    for read-only recon when locations are unknown. Detect the stack from `package.json`
    dependencies, `pubspec.yaml`, `*.xcodeproj` or `Package.swift`, `composer.json`, or
    `app.json` plus a `react-native` dependency. Keep the token file paths; every child you
-   brief needs them.
+   brief needs them. When the work includes any page prose, also read the product's own
+   docs (README, design plan, architecture overview, and the ADRs or specs the pages
+   summarise) so the copy describes the product, not the last change.
 2. GATE INTENT. Ask only what the request, the brief, and GROUND leave open: a value the
    request already specifies is recorded as given and never asked again. With every item
    answered that way, record them and continue. Otherwise send the open questions to your
@@ -48,7 +50,9 @@ and apply the `design-upstream-preflight` skill for the routes this task enables
    applicable state. Record each N/A state with a component-specific reason. Then compose
    components, assemble pages with mock data for hard-to-reach states, and integrate real
    data. Never start from a page. A CONTROLLED component's story needs a state holder: args
-   alone reject every keystroke.
+   alone reject every keystroke. Write every string and page of prose with the
+   `ui-microcopy` skill: lasting product copy, with no dated status words and no
+   repository history.
 5. VERIFY. Follow the `ui-review` skill for the rendered-surface evidence contract.
 6. CRITIQUE. Run `design_impeccable_scan` on the target yourself first, once, so both
    children get the same JSON. With impeccable installed it runs without a prompt; without

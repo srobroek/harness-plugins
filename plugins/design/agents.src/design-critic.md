@@ -71,7 +71,9 @@ state. Only this prompt enforces that, so report any attempted mutation as out o
 2. Open the surface and follow the `ui-review` skill for evidence collection and citations.
 3. Judge every heuristic, in order: visual hierarchy; spacing rhythm; type scale; color
    role discipline; state completeness and feedback; affordance clarity; empty and error
-   state usefulness; content redundancy.
+   state usefulness; content redundancy; copy that matches the product, per the
+   `ui-microcopy` skill (a planned feature shown as working, dated status words such as
+   "today" or "currently", or repository history in user-facing prose is a finding).
 4. Check the `design-no-slop` skill's list. Each hit is a finding unless approved tokens,
    DESIGN.md or the brief sanction it.
 5. Exercise each state the brief names (default, hover, focus-visible, active, disabled,
