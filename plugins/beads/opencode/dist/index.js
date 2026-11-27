@@ -6853,6 +6853,7 @@ var ROUTING_BUDGET_MS = 3000;
 var HIGH_TIER_AGENT = "implementer-high";
 var ORCHESTRATOR_AGENT = "general";
 var ORCHESTRATE_TIER = "orchestrate";
+var REVIEW_AGENTS = ["code-reviewer", "security-auditor", "security-reviewer"];
 var MAX_IDS = 8;
 var ID_PATTERN = /\b[a-z][a-z0-9]*(?:-[a-z0-9]+)*-[a-z0-9]{3,8}(?:\.\d+)*\b/g;
 function beadIdsIn(prompt, prefix) {
@@ -6919,6 +6920,9 @@ function decideRouting(agent, beads) {
     };
   return { kind: "allow" };
 }
+function isReviewSpawn(spawn) {
+  return REVIEW_AGENTS.some((reviewer) => agentMatches(spawn.agent, reviewer));
+}
 function isOrchestratorSpawn(spawn) {
   return agentMatches(spawn.agent, ORCHESTRATOR_AGENT) || spawn.tier?.trim().toLowerCase() === ORCHESTRATE_TIER;
 }
@@ -6945,7 +6949,7 @@ async function registerAgentRouting(ctx, deps = {}) {
     if (event.tool !== "subagent")
       return;
     const spawn = spawnInput(event.input);
-    if (spawn === undefined || isOrchestratorSpawn(spawn))
+    if (spawn === undefined || isOrchestratorSpawn(spawn) || isReviewSpawn(spawn))
       return;
     let decision = { kind: "allow" };
     try {

@@ -154,6 +154,17 @@ describe("registerAgentRouting", () => {
     await cleanup()
   })
 
+  test.each(["code-reviewer", "security-auditor", "security-reviewer", "delivery:code-reviewer"])(
+    "allows a %s review spawn that names beads routed elsewhere",
+    async (agent) => {
+      const calls: string[][] = []
+      const { fake, cleanup } = await start(project(), shown([{ id: "proj-a1b", metadata: { execution_agent_type: "implementer" } }], calls))
+      await fake.fire.tool("execute.before", spawn(agent, "Review the fix round of proj-a1b"))
+      expect(calls).toEqual([])
+      await cleanup()
+    },
+  )
+
   test("still refuses a coder or mechanic spawn naming a bead routed elsewhere", async () => {
     const { fake, cleanup } = await start(project(), implementerBeads)
     for (const agent of ["coder", "mechanic"])
