@@ -6854,10 +6854,10 @@ var HIGH_TIER_AGENT = "implementer-high";
 var ORCHESTRATOR_AGENT = "general";
 var ORCHESTRATE_TIER = "orchestrate";
 var REVIEW_AGENTS = ["code-reviewer", "security-auditor", "security-reviewer"];
-var ALTERNATE_AGENTS = {
-  implementer: ["coder"],
-  [HIGH_TIER_AGENT]: ["coder"]
-};
+var ALTERNATE_AGENTS = new Map([
+  ["implementer", ["coder"]],
+  [HIGH_TIER_AGENT, ["coder"]]
+]);
 var MAX_IDS = 8;
 var ID_PATTERN = /\b[a-z][a-z0-9]*(?:-[a-z0-9]+)*-[a-z0-9]{3,8}(?:\.\d+)*\b/g;
 function beadIdsIn(prompt, prefix) {
@@ -6905,7 +6905,7 @@ function agentMatches(agent, agentType) {
   return a === t || a.endsWith(`:${t}`) || a.endsWith(`/${t}`);
 }
 function agentServes(agent, agentType) {
-  const alternates = ALTERNATE_AGENTS[agentType.toLowerCase()] ?? [];
+  const alternates = ALTERNATE_AGENTS.get(agentType.toLowerCase()) ?? [];
   return agentMatches(agent, agentType) || alternates.some((alternate) => agentMatches(agent, alternate));
 }
 function decideRouting(agent, beads) {

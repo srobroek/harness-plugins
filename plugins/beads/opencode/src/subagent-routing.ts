@@ -27,10 +27,10 @@ export const ORCHESTRATE_TIER = "orchestrate"
 export const REVIEW_AGENTS: readonly string[] = ["code-reviewer", "security-auditor", "security-reviewer"]
 
 /** Agents a bead's `execution_agent_type` also accepts: `coder` works in lane worktrees, which `implementer` cannot. */
-export const ALTERNATE_AGENTS: Readonly<Record<string, readonly string[]>> = {
-  implementer: ["coder"],
-  [HIGH_TIER_AGENT]: ["coder"],
-}
+export const ALTERNATE_AGENTS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["implementer", ["coder"]],
+  [HIGH_TIER_AGENT, ["coder"]],
+])
 
 /** At most this many bead ids are looked up per spawn. */
 const MAX_IDS = 8
@@ -103,7 +103,7 @@ export function agentMatches(agent: string, agentType: string): boolean {
 
 /** Whether `agent` may execute a bead typed `agentType`: the named agent or one of its `ALTERNATE_AGENTS`. */
 export function agentServes(agent: string, agentType: string): boolean {
-  const alternates = ALTERNATE_AGENTS[agentType.toLowerCase()] ?? []
+  const alternates = ALTERNATE_AGENTS.get(agentType.toLowerCase()) ?? []
   return agentMatches(agent, agentType) || alternates.some((alternate) => agentMatches(agent, alternate))
 }
 

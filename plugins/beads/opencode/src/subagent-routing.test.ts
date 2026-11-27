@@ -187,6 +187,12 @@ describe("registerAgentRouting", () => {
     await cleanup()
   })
 
+  test.each(["constructor", "__proto__"])("refuses a coder spawn naming a bead typed %s", async (agentType) => {
+    const { fake, cleanup } = await start(project(), shown([{ id: "proj-a1b", metadata: { execution_agent_type: agentType } }]))
+    await expect(fake.fire.tool("execute.before", spawn("coder", "Work on proj-a1b"))).rejects.toThrow(/FO-5/)
+    await cleanup()
+  })
+
   test("refuses a spawn to an agent the bead does not name, reading only the prefixed ids", async () => {
     const calls: string[][] = []
     const { fake, cleanup } = await start(
