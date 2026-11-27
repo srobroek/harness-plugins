@@ -19,7 +19,9 @@ and apply the `design-upstream-preflight` skill for the routes this task enables
    `explore` for read-only recon when locations are unknown. Detect the stack from
    `package.json` dependencies, `pubspec.yaml`, `*.xcodeproj` or `Package.swift`,
    `composer.json`, or `app.json` plus a `react-native` dependency. Keep the token file
-   paths; every child you brief needs them.
+   paths; every child you brief needs them. When the work includes any page prose, also
+   read the product's own docs (README, design plan, architecture overview, and the ADRs
+   or specs the pages summarise) so the copy describes the product, not the last change.
 2. GATE INTENT. Put the intent questions to the user through your caller: as a subagent you
    cannot question the user. Ask only what the request, the brief, and GROUND leave open: a value the
    request already specifies is recorded as given and never asked again. With every item
@@ -42,6 +44,8 @@ and apply the `design-upstream-preflight` skill for the routes this task enables
    Then compose components, assemble pages with mock data for hard-to-reach states,
    and integrate real data. Never start from a page. A CONTROLLED
    component's story needs a state holder: args alone reject every keystroke.
+   Write every string and page of prose with the `ui-microcopy` skill: lasting product
+   copy, with no dated status words and no repository history.
 5. VERIFY. Follow the `ui-review` skill for the rendered-surface evidence contract.
 6. CRITIQUE. Run the `design_impeccable_scan` tool on the target yourself first, since the
    critic cannot; it asks the user before it runs `npx --yes impeccable detect --json`, and
