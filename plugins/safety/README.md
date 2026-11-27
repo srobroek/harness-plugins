@@ -190,7 +190,7 @@ first in `packages` in `~/.pi/agent/settings.json`, and load this extension afte
 
 ```json
 {
-  "packages": ["npm:cc-safety-net@2.8.2"]
+  "packages": ["npm:cc-safety-net@2.8.3"]
 }
 ```
 
@@ -315,7 +315,7 @@ the six rules off in the cc-safety-net user policy, `~/.cc-safety-net/policy.jso
 }
 ```
 
-`npx -y cc-safety-net@2.8.2 status` shows the policy cc-safety-net enforces.
+`npx -y cc-safety-net@2.8.3 status` shows the policy cc-safety-net enforces.
 
 ### Options on pi
 
