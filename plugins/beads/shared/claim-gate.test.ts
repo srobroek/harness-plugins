@@ -79,10 +79,35 @@ describe("workSites", () => {
     expect(workSites("bd update ab-1 --status in_progress -a someone --notes ab-9 ab-2")[0]?.ids).toEqual(["ab-1", "ab-2"])
   })
 
-  test("a comment names one bead; the rest is its text", () => {
-    expect(workSites('bd comment ab-1 "fixes ab-2"')[0]?.ids).toEqual(["ab-1"])
-    expect(workSites("bd comments add ab-1 --file notes.md")[0]?.ids).toEqual(["ab-1"])
-    expect(workSites("bd comments add -a me ab-3 text")[0]?.ids).toEqual(["ab-3"])
+  test("only a status, assignee or defer change is gated; record edits and comments are not", () => {
+    for (const command of [
+      "bd update ab-1 --status open",
+      "bd update ab-1 -s blocked --notes n",
+      "bd update ab-1 --assignee=me",
+      "bd update ab-1 -a me",
+      "bd update ab-1 --defer tomorrow",
+    ])
+      expect(workSites(command).map((site) => site.verb)).toEqual(["update"])
+    for (const command of [
+      "bd update ab-1 --append-notes n",
+      "bd update ab-1 --notes --status",
+      "bd update ab-1 --title t -d desc --add-label x -p 1 --design-file d.md --acceptance a",
+      'bd comment ab-1 "fixes ab-2"',
+      "bd comments add ab-1 --file notes.md",
+    ])
+      expect(workSites(command)).toEqual([])
+  })
+
+  test("redirections name no bead", () => {
+    for (const command of [
+      'bd update bhn-1 --status open --append-notes "$(cat /tmp/n.md)" >/dev/null && bd show bhn-1',
+      "bd update bhn-1 --status open 2>&1",
+      "bd update bhn-1 --status open > /dev/null",
+      "bd update bhn-1 --status open 2>/dev/null >>log &>out",
+    ])
+      expect(workSites(command)[0]?.ids).toEqual(["bhn-1"])
+    // A quoted word is data, not a redirection.
+    expect(workSites('bd close ab-1 ">x" -r y')[0]?.ids).toEqual(["ab-1", ">x"])
   })
 
   test("reads, listings and help are not gated", () => {
@@ -105,7 +130,7 @@ describe("workSites", () => {
   })
 
   test("every bd in a list is read", () => {
-    expect(workSites("bd update ab-1 --notes n; cd x && bd close ab-2 -r y").map((site) => site.ids)).toEqual([["ab-1"], ["ab-2"]])
+    expect(workSites("bd update ab-1 --status open; cd x && bd close ab-2 -r y").map((site) => site.ids)).toEqual([["ab-1"], ["ab-2"]])
   })
 })
 
@@ -269,10 +294,19 @@ describe("decideBeadWork", () => {
     ).toBeUndefined()
   })
 
-  test("an update and a comment need the claim too", async () => {
+  test("a lifecycle update needs the claim; notes and comments on another's bead do not", async () => {
     const table = { "p-ab-1": { status: "in_progress", assignee: "pi/other" } }
-    expect((await decide("bd update p-ab-1 --notes n", table))?.gate).toBe(CLAIM_GATE)
-    expect((await decide('bd comment p-ab-1 "note"', table))?.gate).toBe(CLAIM_GATE)
+    expect((await decide("bd update p-ab-1 --status open", table))?.gate).toBe(CLAIM_GATE)
+    const calls: string[][] = []
+    expect(await decide("bd update p-ab-1 --append-notes n >/dev/null", table, calls)).toBeUndefined()
+    expect(await decide('bd comment p-ab-1 "note"', table, calls)).toBeUndefined()
+    expect(await decide('bd comments add p-ab-1 "note"', table, calls)).toBeUndefined()
+    expect(calls).toEqual([])
+  })
+
+  test("the guarded unblock still passes with a redirection", async () => {
+    const table = { "p-1": { status: "blocked", assignee: ACTOR } }
+    expect(await decide(`bd update p-1 --status open --if-status blocked --if-assignee ${ACTOR} 2>&1`, table)).toBeUndefined()
   })
 
   test("a close without evidence is refused before any lookup", async () => {

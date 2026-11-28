@@ -1,9 +1,10 @@
 /**
  * Beads gates pi adds beyond the OpenCode plugin's shell gates:
  *
- * - claim before work: `bd close`/`done`, `bd update` (other than a claim) and `bd comment` /
- *   `bd comments add` on a bead need that bead `in_progress` under this session's actor or one
- *   of its descendants', so a parent may still close the bead its child worked;
+ * - claim before work: `bd close`/`done` and a lifecycle `bd update` (a `--status`, `--assignee` or
+ *   `--defer` change, other than a claim) on a bead need that bead `in_progress` under this
+ *   session's actor or one of its descendants', so a parent may still close the bead its child
+ *   worked. Notes, labels, fields and comments are not work: any session may record them;
  * - close with evidence: a close needs a `--reason` (or `--reason-file`) that carries checkable
  *   evidence (a command, a changed path, a commit or PR, or a test result);
  * - a pi-subagents child edits files in a Beads checkout only while it holds a claim there.
@@ -30,7 +31,7 @@ export const EVIDENCE_GATE = "bd-close-evidence-gate"
 export const WRITE_CLAIM_GATE = "write-claim-gate"
 
 /** The work a gated invocation does to the beads it names. */
-export type WorkVerb = "close" | "update" | "comment"
+export type WorkVerb = "close" | "update"
 
 /** Where a close reads its reason: the text on the command line, or a file it names. */
 export type CloseReason = { kind: "text"; text: string } | { kind: "file"; path: string }
@@ -48,6 +49,8 @@ export type WorkSite = {
   beadsDir?: string
   /** The reasons a close gives, in order; empty for other verbs. */
   reasons: CloseReason[]
+  /** The words bd receives after the verb, redirections dropped. */
+  words: string[]
   /** What names this invocation among the command's resolved write targets. */
   shape: { verb: string; args: string[]; globals: string[] }
 }
@@ -102,7 +105,50 @@ const VERB_VALUE_FLAGS: Readonly<Record<WorkVerb, Readonly<Record<string, true>>
     "-t": true,
     "--unset-metadata": true,
   },
-  comment: { "--file": true, "-f": true, "--author": true, "-a": true },
+}
+
+/** The `bd update` flags that change who works a bead or where it stands; every other flag edits its record. */
+const LIFECYCLE_FLAGS: Readonly<Record<string, true>> = {
+  "--status": true,
+  "-s": true,
+  "--assignee": true,
+  "-a": true,
+  "--defer": true,
+}
+
+/** Whether an update's words (after its verb) change the bead's status, holder or deferral. */
+function changesLifecycle(words: readonly string[]): boolean {
+  for (let i = 0; i < words.length; i++) {
+    const token = words[i] ?? ""
+    if (!token.startsWith("-") || token === "-") continue
+    const flag = token.split("=", 1)[0] ?? token
+    if (LIFECYCLE_FLAGS[flag] === true) return true
+    if (!token.includes("=") && (VERB_VALUE_FLAGS.update[flag] === true || GLOBAL_VALUE_FLAGS[flag] === true)) i++
+  }
+  return false
+}
+
+/**
+ * A redirection the legacy tokenizer leaves among the arguments: `>f`, `2>`, `>>log`, `<in`, `&>f`.
+ * `bd` never sees it, so it names no bead.
+ */
+const REDIRECTION = /^(?:\d+|&)?(?:>>?|<<?<?|>\||>&|<&)/
+
+/** The words of an invocation bd receives: redirections and the target written after a bare one dropped. */
+function withoutRedirections(args: readonly string[], words: readonly { value: string; quoted: boolean }[]): string[] {
+  const offset = words.length - args.length
+  const kept: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i] ?? ""
+    const match = words[offset + i]?.quoted === true ? null : REDIRECTION.exec(word)
+    if (match === null) {
+      kept.push(word)
+      continue
+    }
+    // A bare operator (`>` or `2>`) takes the next word as its target.
+    if (match[0].length === word.length) i++
+  }
+  return kept
 }
 
 const DB_FLAGS: Readonly<Record<string, true>> = { "--db": true, "-C": true, "--directory": true }
@@ -118,14 +164,10 @@ function workVerb(verb: string, args: readonly string[], verbAt: number): { verb
     case "close":
     case "done":
       return { verb: "close", skip: 0 }
-    case "update":
+    case "update": {
       // A claim is how work starts; bd itself refuses one on a bead another actor holds.
-      return flagEnabled(args.slice(verbAt + 1), ["--claim"]) ? undefined : { verb: "update", skip: 0 }
-    case "comment":
-      return { verb: "comment", skip: 0 }
-    case "comments": {
-      const sub = args.slice(verbAt + 1).find((word) => !word.startsWith("-"))
-      return sub === "add" ? { verb: "comment", skip: 1 } : undefined
+      const words = args.slice(verbAt + 1)
+      return flagEnabled(words, ["--claim"]) || !changesLifecycle(words) ? undefined : { verb: "update", skip: 0 }
     }
     default:
       return undefined
@@ -139,7 +181,8 @@ export function workSites(command: string): WorkSite[] {
   const sites: WorkSite[] = []
   for (const invocation of parsedInvocations(parsed)) {
     if (invocation.verb === undefined) continue
-    const { args, globals } = invocation
+    const { globals } = invocation
+    const args = withoutRedirections(invocation.args, invocation.position.words)
     if (flagEnabled(globals, ["--help", "-h"]) || flagEnabled(args, ["--help", "-h"])) continue
     const verbAt = globals.length
     const kind = workVerb(invocation.verb, args, verbAt)
@@ -175,8 +218,7 @@ export function workSites(command: string): WorkSite[] {
       if (!inline && (valueFlags[flag] === true || GLOBAL_VALUE_FLAGS[flag] === true)) i++
     }
     const named = positionals.slice(kind.skip)
-    // A comment's first positional is the bead; the rest is its text.
-    const idWords = kind.verb === "comment" ? named.slice(0, 1) : named
+    const idWords = named
     const beadsDir = leadingAssignment(invocation.position.argv, "BEADS_DIR")
     sites.push({
       verb: kind.verb,
@@ -185,7 +227,8 @@ export function workSites(command: string): WorkSite[] {
       dbArgs,
       ...(beadsDir === undefined ? {} : { beadsDir }),
       reasons,
-      shape: { verb: invocation.verb, args: args.slice(verbAt + 1), globals },
+      words: args.slice(verbAt + 1),
+      shape: { verb: invocation.verb, args: invocation.args.slice(verbAt + 1), globals },
     })
   }
   return sites
@@ -307,8 +350,8 @@ function isGuardedOwnerUnblock(site: WorkSite, actor: string, rows: readonly Iss
   if (!actor || !id || site.ids.length !== 1 || site.verb !== "update" || site.shape.globals.length !== 0) return false
   const expected = [id, "--status", "open", "--if-status", "blocked", "--if-assignee", actor]
   return (
-    site.shape.args.length === expected.length &&
-    expected.every((word, index) => site.shape.args[index] === word) &&
+    site.words.length === expected.length &&
+    expected.every((word, index) => site.words[index] === word) &&
     rows.some((row) => row.id === id && row.status === "blocked" && row.assignee === actor)
   )
 }
