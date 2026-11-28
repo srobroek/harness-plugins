@@ -360,8 +360,13 @@ The OpenCode plugin and the Claude Code hook do not run these three gates.
    session's actor or under a descendant's:
 
    - `bd close` and `bd done`
-   - `bd update` without `--claim`
-   - `bd comment` and `bd comments add`
+   - `bd update` that changes `--status`/`-s`, `--assignee`/`-a` or `--defer`, other than a
+     `--claim`
+
+   Other `bd update` flags (notes, title, description, design, acceptance, labels, priority,
+   metadata, parent) and `bd comment`/`bd comments add` edit the bead's record, not its work, so
+   any session may run them: a lead can annotate an epic or a child's bead without claiming it.
+   Redirections such as `>/dev/null` or `2>&1` name no bead.
 
    `pi/<root>/<child>` descends from `pi/<root>`. A parent can therefore close the bead its
    child claimed, but the child cannot close the parent's. Name the ids as literal words. The

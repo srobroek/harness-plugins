@@ -5180,9 +5180,44 @@ var VERB_VALUE_FLAGS = {
     "--type": true,
     "-t": true,
     "--unset-metadata": true
-  },
-  comment: { "--file": true, "-f": true, "--author": true, "-a": true }
+  }
 };
+var LIFECYCLE_FLAGS = {
+  "--status": true,
+  "-s": true,
+  "--assignee": true,
+  "-a": true,
+  "--defer": true
+};
+function changesLifecycle(words) {
+  for (let i = 0;i < words.length; i++) {
+    const token = words[i] ?? "";
+    if (!token.startsWith("-") || token === "-")
+      continue;
+    const flag = token.split("=", 1)[0] ?? token;
+    if (LIFECYCLE_FLAGS[flag] === true)
+      return true;
+    if (!token.includes("=") && (VERB_VALUE_FLAGS.update[flag] === true || GLOBAL_VALUE_FLAGS3[flag] === true))
+      i++;
+  }
+  return false;
+}
+var REDIRECTION = /^(?:\d+|&)?(?:>>?|<<?<?|>\||>&|<&)/;
+function withoutRedirections(args, words) {
+  const offset = words.length - args.length;
+  const kept = [];
+  for (let i = 0;i < args.length; i++) {
+    const word = args[i] ?? "";
+    const match = words[offset + i]?.quoted === true ? null : REDIRECTION.exec(word);
+    if (match === null) {
+      kept.push(word);
+      continue;
+    }
+    if (match[0].length === word.length)
+      i++;
+  }
+  return kept;
+}
 var DB_FLAGS = { "--db": true, "-C": true, "--directory": true };
 var DYNAMIC = /[$`]/;
 var ASSIGNMENT5 = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -5191,13 +5226,9 @@ function workVerb(verb, args, verbAt) {
     case "close":
     case "done":
       return { verb: "close", skip: 0 };
-    case "update":
-      return flagEnabled(args.slice(verbAt + 1), ["--claim"]) ? undefined : { verb: "update", skip: 0 };
-    case "comment":
-      return { verb: "comment", skip: 0 };
-    case "comments": {
-      const sub = args.slice(verbAt + 1).find((word) => !word.startsWith("-"));
-      return sub === "add" ? { verb: "comment", skip: 1 } : undefined;
+    case "update": {
+      const words = args.slice(verbAt + 1);
+      return flagEnabled(words, ["--claim"]) || !changesLifecycle(words) ? undefined : { verb: "update", skip: 0 };
     }
     default:
       return;
@@ -5211,7 +5242,8 @@ function workSites(command) {
   for (const invocation of parsedInvocations2(parsed)) {
     if (invocation.verb === undefined)
       continue;
-    const { args, globals } = invocation;
+    const { globals } = invocation;
+    const args = withoutRedirections(invocation.args, invocation.position.words);
     if (flagEnabled(globals, ["--help", "-h"]) || flagEnabled(args, ["--help", "-h"]))
       continue;
     const verbAt = globals.length;
@@ -5257,7 +5289,7 @@ function workSites(command) {
         i++;
     }
     const named = positionals.slice(kind.skip);
-    const idWords = kind.verb === "comment" ? named.slice(0, 1) : named;
+    const idWords = named;
     const beadsDir = leadingAssignment(invocation.position.argv, "BEADS_DIR");
     sites.push({
       verb: kind.verb,
@@ -5266,7 +5298,8 @@ function workSites(command) {
       dbArgs,
       ...beadsDir === undefined ? {} : { beadsDir },
       reasons,
-      shape: { verb: invocation.verb, args: args.slice(verbAt + 1), globals }
+      words: args.slice(verbAt + 1),
+      shape: { verb: invocation.verb, args: invocation.args.slice(verbAt + 1), globals }
     });
   }
   return sites;
@@ -5350,7 +5383,7 @@ function isGuardedOwnerUnblock(site, actor, rows) {
   if (!actor || !id || site.ids.length !== 1 || site.verb !== "update" || site.shape.globals.length !== 0)
     return false;
   const expected = [id, "--status", "open", "--if-status", "blocked", "--if-assignee", actor];
-  return site.shape.args.length === expected.length && expected.every((word, index) => site.shape.args[index] === word) && rows.some((row) => row.id === id && row.status === "blocked" && row.assignee === actor);
+  return site.words.length === expected.length && expected.every((word, index) => site.words[index] === word) && rows.some((row) => row.id === id && row.status === "blocked" && row.assignee === actor);
 }
 async function decideBeadWork(command, cwd, deps) {
   const sites = workSites(command);
