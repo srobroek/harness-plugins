@@ -8,7 +8,7 @@ export const PINS: Record<string, string> = {
   // renovate: datasource=npm depName=knip
   knip: "6.47.0",
   // renovate: datasource=npm depName=dependency-cruiser
-  "dependency-cruiser": "18.8.0",
+  "dependency-cruiser": "18.9.0",
   // renovate: datasource=npm depName=jscpd
   jscpd: "5.4.3",
   // renovate: datasource=npm depName=eslint
