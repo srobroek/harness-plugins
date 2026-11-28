@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-beads-enforcer",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
   "keywords": [
     "pi-package"

@@ -1,3 +1,9 @@
+## beads [1.5.1](https://github.com/srobroek/harness-plugins/compare/beads--v1.5.0...beads--v1.5.1) (2026-11-28)
+
+### Bug Fixes
+
+* **beads:** gate only lifecycle updates on pi; ignore redirections ([a6ae079](https://github.com/srobroek/harness-plugins/commit/a6ae0799b3677a093349e79ea88936b043c76090))
+
 ## beads [1.5.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.4.0...beads--v1.5.0) (2026-11-27)
 
 ### Features
