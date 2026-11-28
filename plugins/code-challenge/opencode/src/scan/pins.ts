@@ -6,7 +6,7 @@ export const PINS: Record<string, string> = {
   // renovate: datasource=npm depName=oxlint
   oxlint: "1.94.0",
   // renovate: datasource=npm depName=knip
-  knip: "6.47.0",
+  knip: "6.48.0",
   // renovate: datasource=npm depName=dependency-cruiser
   "dependency-cruiser": "18.8.0",
   // renovate: datasource=npm depName=jscpd
