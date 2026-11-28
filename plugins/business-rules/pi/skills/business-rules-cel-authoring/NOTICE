@@ -1,0 +1,27 @@
+business-rules-cel-authoring
+
+This skill is adapted from the "cel-authoring" skill of cel-expr/skills:
+
+  https://github.com/cel-expr/skills/tree/a41927f7d836d3e2eeec6c809b66fa444093427a/skills/cel-authoring
+  Commit a41927f7d836d3e2eeec6c809b66fa444093427a (2026-11-25)
+
+The upstream source files carry "Copyright 2026 Google LLC". The upstream work is licensed under the Apache
+License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0. The upstream repository ships no NOTICE
+file. This adaptation is distributed under the same licence.
+
+Changes made in srobroek/harness-plugins, 2026-11:
+
+- Renamed the skill to business-rules-cel-authoring.
+- Replaced the "Locate or Create Environment" step. The skill now reads the project's generated environment,
+  descriptor set and profile manifest, and stops when none covers the scope. It never writes an envConfig.
+- Removed the protoc descriptor-set alias, -proto_db, and the advice on protoTypes, imports and enum variables.
+- Replaced "go install ...@latest" with an install from a verified release.
+- Removed the advice to prefer namespaced variables of simple types over a map; scopes are message-typed.
+- Restricted the policy section to the supported policy profile: one flat match block, a condition on every
+  choice but the final one, an unconditional final choice, no variables, aggregate, nested rule, explanation or
+  imports, and outputs of the slot type. Noted that the v0.4.0 release has no -format=policy.
+- Added the steps that run the project's reference checker and add the cases to the project's suite.
+- Removed skippedTestCases, which the v0.4.0 release does not have.
+- Rewrote the map-key and list-index guards as conditionals with a typed fallback, and bounded the index below
+  by 0.
+- Left out the upstream examples and references, which hand-write environments.

@@ -48,6 +48,7 @@ Loaded in every project by the global configuration. Do not add them per project
 | ast-grep | Structural code search with the ast-grep CLI: a skill on patterns, Rust macro and Go call gotchas, bounded output, preview-only rewrites, and when to use Semgrep or rust-analyzer instead |
 | autopilot | Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions |
 | aws | AWS working guidance as a skill, plus the read-only AWS MCP Server and the AWS Pricing MCP server, added in AWS projects |
+| business-rules | Business rules for any project: where the logic lives, host-code guards and adapters, the CEL adoption standard, rule tests, the rules CI gate, and CEL authoring skills adapted from cel-expr/skills |
 | chezmoi | Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill |
 | code-challenge | Challenge code for simplification, performance, stability, hand-rolled code and structure: one skill, a /code-challenge command, phase formulas and two read-only challenger agents |
 | debate | Stress-test a decision from both sides or grill a plan in frontier rounds |

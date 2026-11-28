@@ -1,0 +1,27 @@
+business-rules-cel-debugging
+
+This skill is adapted from the "cel-debugging" skill of cel-expr/skills:
+
+  https://github.com/cel-expr/skills/tree/a41927f7d836d3e2eeec6c809b66fa444093427a/skills/cel-debugging
+  Commit a41927f7d836d3e2eeec6c809b66fa444093427a (2026-11-25)
+
+The upstream source files carry "Copyright 2026 Google LLC". The upstream work is licensed under the Apache
+License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0. The upstream repository ships no NOTICE
+file. This adaptation is distributed under the same licence.
+
+Changes made in srobroek/harness-plugins, 2026-11:
+
+- Renamed the skill to business-rules-cel-debugging.
+- Pointed the "Locate Environment Configuration" step at the project's generated environment, descriptor set and
+  profile manifest. The skill stops when none covers the scope, and never edits the environment.
+- Replaced the fix for an undeclared reference: correct the name, or ask for a scope change. Removed the advice to
+  add protoTypes, imports or enum variables, and the protoc and -proto_db steps.
+- Added the int-against-double and string-against-int mismatch examples.
+- Tied the optional-chaining solutions to the profile's optional extension, and limited the map-key solutions to
+  map-typed fields.
+- Replaced the dyn type-guarding and environment-narrowing solutions: a structural scope has no dyn, and a missing
+  extension is a profile change.
+- Replaced "go install ...@latest" with an install from a verified release, and added the reference-checker step.
+- Removed skippedTestCases, which the v0.4.0 release does not have.
+- Replaced the conversion to double as a division-by-zero fix with an explicit zero guard: a double divided by
+  zero is infinite, so the converted guard can pass.

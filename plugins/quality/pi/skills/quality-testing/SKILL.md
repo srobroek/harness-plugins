@@ -58,5 +58,6 @@ fixes, load the `quality-test-audit` skill.
 | Changing, removing or refactoring tested code; bug fixes, legacy code, flaky tests | [maintenance.md](references/maintenance.md) |
 | Choosing a fake, stub, spy or mock, or a double for a contract | [doubles.md](references/doubles.md) |
 | Two languages or processes share a message contract: one schema, a shared corpus, cross-language tests | [shared-contracts.md](references/shared-contracts.md) |
+| Testing business rules or CEL expressions: rule case tables, the supported-profile suite per engine, presence and bundle cases | the `business-rules-testing` skill of the `business-rules` plugin |
 | Coverage, mutation testing, property tests, fuzzing | [signals.md](references/signals.md) |
 | Reviewing the test changes in a diff or pull request | [review-tests.md](references/review-tests.md) |

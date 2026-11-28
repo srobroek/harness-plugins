@@ -46,6 +46,15 @@ Observed on the spike's 29 fixtures for one contract, 2026-11-25. None beat Type
 | `ogen` orders open-object extras randomly | Compare parsed JSON, not bytes, in golden tests (this fixes key order only) |
 | Fractions longer than 6 digits (Pydantic) or 9 digits (typify, ogen) are truncated on round trip | Comparing parsed JSON does not recover lost precision. Test the significant fractional digits, then constrain the precision in the contract or use a lossless representation (an integer count or a string) |
 
+## CEL types are generated from the published schemas
+
+**Do:** when CEL rules read a contract's records, generate the CEL environment from the published JSON Schema. The
+generator writes a FileDescriptorSet and one profile manifest per rule scope. Type a scope only when every node a
+rule can reach has one shape. Validate each record against its schema before a rule sees it. The `business-rules`
+plugin's `business-rules-cel` skill has the pipeline and the standard.
+**Do not:** hand-write a CEL environment, type a field `dyn`, or keep a hand-written `.proto` for rules beside the
+TypeSpec source. The generated `.proto` files are output, drift-checked like every other generated file.
+
 ## Pattern dialect
 
 Schema `pattern` values run in a different regex engine in each language (ECMAScript, Rust `regex`, RE2, Python `re`, pydantic-core), and they disagree on `\d`, `\w`, `\s`, `$` and Unicode classes. Spike evidence, 9 engines, 2026-11-24.
@@ -84,7 +93,7 @@ Read when a consumer is built before the provider exists. When to stub and how t
 **Do:** put the dependency behind the contract's interface (trait, interface, protocol). Consumers take the interface, so a swap changes only wiring. Use the contract's shared types (generated from the schema, or the one shared types module).
 **Do not:** copy a contract type into a stub or consumer, or define the interface inside the stub.
 
-**Do:** mark each stub `// STUB(<task-id>): what this fakes` (`#` in Python, TOML and YAML). One marker names one task; a task may cover several markers. Keep stubs minimal and deterministic: implement the contract, nothing more.
+**Do:** mark each stub `// STUB(<task-id>): what this fakes` (`#` in Python, TOML and YAML). One marker names one task. A task owns one or more markers. Keep stubs minimal and deterministic: implement the contract, nothing more.
 **Do not:** let a stub on a production path silently return plausible fake data. Where it affects behavior, say so with a capability flag or a "not yet supported" error.
 
 Drift checks above still apply: regenerate shared types in the same change as a contract change. When two languages share a contract, both consume the same generated schema files: `toolchain-api` has the gates and `quality-testing`'s `shared-contracts.md` the tests. Language examples: [rust.md](rust.md), [python.md](python.md), [typescript.md](typescript.md), [go.md](go.md).

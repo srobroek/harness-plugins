@@ -768,6 +768,93 @@
       ]
     },
     {
+      "name": "business-rules",
+      "version": "0.0.0",
+      "description": "Business rules for any project: where the logic lives, host-code guards and adapters, the CEL adoption standard, rule tests, the rules CI gate, and CEL authoring skills adapted from cel-expr/skills.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "business-rules-cel",
+            "business-rules-cel-authoring",
+            "business-rules-cel-debugging",
+            "business-rules-cel-testing",
+            "business-rules-ci",
+            "business-rules-code",
+            "business-rules-guide",
+            "business-rules-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "business-rules-cel",
+            "business-rules-cel-authoring",
+            "business-rules-cel-debugging",
+            "business-rules-cel-testing",
+            "business-rules-ci",
+            "business-rules-code",
+            "business-rules-guide",
+            "business-rules-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "business-rules-cel",
+            "business-rules-cel-authoring",
+            "business-rules-cel-debugging",
+            "business-rules-cel-testing",
+            "business-rules-ci",
+            "business-rules-code",
+            "business-rules-guide",
+            "business-rules-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "business-rules-cel",
+            "business-rules-cel-authoring",
+            "business-rules-cel-debugging",
+            "business-rules-cel-testing",
+            "business-rules-ci",
+            "business-rules-code",
+            "business-rules-guide",
+            "business-rules-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
       "name": "chezmoi",
       "version": "0.7.2",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",

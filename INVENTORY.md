@@ -15,6 +15,7 @@
 | aws | 0.10.1 | development | global | opencode, claude, omp, pi |
 | beads | 1.5.0 | development | project | opencode, claude, pi |
 | build | 0.11.1 | development | project | opencode, omp, pi |
+| business-rules | 0.0.0 | development | global | opencode, claude, omp, pi |
 | chezmoi | 0.7.2 | development | global | opencode, claude, pi |
 | claude-compat | 0.5.4 | development | project | opencode |
 | code-challenge | 2.2.1 | development | global | opencode, omp, pi |

@@ -44,6 +44,9 @@ permissions:
     resource: "ast-grep-*"
     effect: allow
   - action: skill
+    resource: "business-rules-*"
+    effect: allow
+  - action: skill
     resource: delivery-git-workflow
     effect: allow
   - action: skill

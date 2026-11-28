@@ -3,7 +3,7 @@
 # Read-only, but keeps bash: it reads the patch with git diff, git log and git show and runs the existing test and check commands
 # OMP cannot express these OpenCode permissions; they are dropped:
 #   OMP has no per-resource rules; the tool is kept: ask read(*.env), ask read(*.env.*), allow read(*.env.example), 288 shell rules
-#   OMP has no per-agent skill filter: 7 skill rules
+#   OMP has no per-agent skill filter: 8 skill rules
 #   OMP has no per-agent directory rule: ask external_directory
 name: code-reviewer
 description: "Read-only review of a local diff (working tree, branch or commits) for bugs the author wants fixed before merge; returns a verdict."

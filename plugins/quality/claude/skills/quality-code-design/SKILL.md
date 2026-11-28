@@ -41,7 +41,7 @@ References live in `references/` beside this file; the links below are relative 
 | Logs, traces, metrics, or a new service, worker, CLI or Lambda function → [telemetry.md](references/telemetry.md) | OpenTelemetry by default: setup, export, propagation, sampling, flushing, span/metric/log rules, telemetry tests; SDK packages live in `lang-<language>-libraries` |
 | Feature flags, rollout decisions, outage defaults or flag storage → [feature-flags.md](references/feature-flags.md) | Typed flag module, edge decisions, safe defaults, storage, testing, telemetry and removal; process lives in `trunk-dev-feature-flags` |
 | Database state, transitions, migrations, dynamic SQL, or persistence tests → [persistence.md](references/persistence.md) | DB as the record, compare-and-set updates, append-only migrations, bound queries, real-database tests |
-| A serialized or published contract (HTTP API, config or file format, record, CLI or tool JSON output, event, MCP tool schema); generated bindings, IPC command names, wire casing, or client/server contract tests → [contracts.md](references/contracts.md) | TypeSpec as the one source, committed codegen with drift check, pattern dialect, known generator issues, name conformance, one casing, tests against the real surface, stubs behind a contract |
+| A serialized or published contract (HTTP API, config or file format, record, CLI or tool JSON output, event, MCP tool schema); generated bindings, IPC command names, wire casing, or client/server contract tests → [contracts.md](references/contracts.md) | TypeSpec as the one source, committed codegen with drift check, CEL types generated from the published schemas, pattern dialect, known generator issues, name conformance, one casing, tests against the real surface, stubs behind a contract |
 | Plan/approve/apply flows, bulk or destructive file operations, path checks, audit trails → [safe-mutation.md](references/safe-mutation.md) | Apply-time approval tokens, freshness checks, traversal, append-only audit, reversible deletes |
 | Contracts, internal knowledge, naming, errors, or effects → [supporting-principles.md](references/supporting-principles.md) | Design by Contract, least knowledge, predictability, command-query separation; researched sources and limits |
 | Go code → [go.md](references/go.md) | Consumer interfaces, structs, composition, package boundaries, errors |
@@ -55,7 +55,7 @@ References live in `references/` beside this file; the links below are relative 
 | Test-first, TDD, or red-green-refactor → [test-first.md](references/test-first.md) | Vertical slices, seams, red before green, forced red, mockable boundaries |
 | Hard bug, flaky failure, or performance regression → [debugging.md](references/debugging.md) | Feedback loops, minimisation, falsifiable hypotheses, tagged instrumentation, regression seam, cleanup |
 | Untrusted input, identity, permissions, sensitive data, dependencies, or privileged automation → [security.md](references/security.md) | Trust boundaries, abuse cases, dependency and artifact assurance |
-| Persistent state, API/event compatibility, network effects, or release operations → [release.md](references/release.md) | Mixed versions, recovery, idempotency, observability, staged release, release-state evidence |
+| Persistent state, API/event compatibility, network side effects, or release operations → [release.md](references/release.md) | Mixed versions, recovery, idempotency, observability, staged release, release-state evidence |
 
 ## Rules
 

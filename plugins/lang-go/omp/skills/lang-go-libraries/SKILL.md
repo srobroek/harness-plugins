@@ -58,6 +58,7 @@ Standard-library entries below use Go `1.27`; retain a supported lower minimum w
 | Dependency security | `golang.org/x/vuln/cmd/govulncheck` `>= 1` | Reachability-aware; complement with artifact SCA. |
 | Concurrency | `context`, channels, `sync`; `golang.org/x/sync/errgroup` `>= 0.25` | Standard library first; bounded groups when cancellation is needed. |
 | Errors and IDs | `errors`, `fmt`, `uuid` | Standard library suffices for error chains and UUID v4/v7 in Go `1.27`. |
+| Rules or expressions | `cel.dev/cel-go` `v0.33.4`, `cel.dev/cel-go/policy` `v0.33.3` | The CEL reference checker: build the environment with explicit options, not with `tools/compiler`. Standard, tests and CI: the `business-rules` plugin (`business-rules-guide`). |
 
 ## References
 
