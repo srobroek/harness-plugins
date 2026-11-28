@@ -4,7 +4,7 @@ export const PINS: Record<string, string> = {
   // renovate: datasource=npm depName=@biomejs/biome
   "@biomejs/biome": "2.6.9",
   // renovate: datasource=npm depName=oxlint
-  oxlint: "1.94.0",
+  oxlint: "1.95.0",
   // renovate: datasource=npm depName=knip
   knip: "6.47.0",
   // renovate: datasource=npm depName=dependency-cruiser
