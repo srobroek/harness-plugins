@@ -3199,7 +3199,7 @@ function parseOutput(parser, text, ctx) {
 // plugins/code-challenge/opencode/src/scan/pins.ts
 var PINS = {
   "@biomejs/biome": "2.6.9",
-  oxlint: "1.94.0",
+  oxlint: "1.95.0",
   knip: "6.47.0",
   "dependency-cruiser": "18.8.0",
   jscpd: "5.4.3",
